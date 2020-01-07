@@ -8,7 +8,11 @@
 #include <unistd.h>
 #include <endian.h>
 #include <linux/types.h>
+#if (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 16) || __GLIBC__ > 2
 #include <sys/auxv.h>
+#else
+#include <signal.h>
+#endif
 
 #include "query_capacity_int.h"
 #include "query_capacity_data.h"
@@ -33,15 +37,31 @@ struct sthyi_priv {
 	int 	avail;
 };
 
+
+
 #if defined __s390__
+#ifndef _SYS_AUXV_H
+static void qc_stfle_signal_handler(int signal) {
+	qc_debug(NULL, "Signal handler invoked with signal %d\n", signal);
+
+	return;
+}
+#endif
+
 static int qc_is_sthyi_facility_available() {
 	unsigned long long stfle_buffer[(STHYI_FACILITY_BIT/64)+1] __attribute__ ((aligned (8))) = { 0,};
+#ifndef _SYS_AUXV_H
+	sighandler_t old_handler = signal(SIGILL, qc_stfle_signal_handler);
+#endif
 	{
 		register unsigned long reg0 asm("0") = STHYI_FACILITY_BIT/64 ;
 		asm volatile (".insn s,0xb2b00000,%0"
 			      : "=m" (stfle_buffer), "+d" (reg0) :
 			      : "cc", "memory");
 	}
+#ifndef _SYS_AUXV_H
+	signal(SIGILL, old_handler);
+#endif
 
 	return (stfle_buffer[STHYI_FACILITY_BIT/64] >> (63 - (STHYI_FACILITY_BIT%64))) & 1;
 }
@@ -49,12 +69,16 @@ static int qc_is_sthyi_facility_available() {
 
 static int qc_is_sthyi_available_vm(struct qc_handle *hdl) {
 #if defined __s390__
+#ifdef _SYS_AUXV_H
 	unsigned long aux = getauxval(AT_HWCAP);
 
-	if (aux & HWCAP_S390_STFLE)
-		return qc_is_sthyi_facility_available();
-	else
+	qc_debug(hdl, "Using getauxval()\n");
+	if (~aux & HWCAP_S390_STFLE)
 		qc_debug(hdl, "STFLE not available\n");
+#else
+	qc_debug(hdl, "Perform raw STFLE retrieval\n");
+#endif
+	return qc_is_sthyi_facility_available();
 #endif
 
 	return 0;
@@ -91,16 +115,16 @@ static int qc_sthyi_lpar(struct qc_handle *hdl, struct sthyi_priv *priv) {
 #ifdef __NR_s390_sthyi
 	sthyi = __NR_s390_sthyi
 #endif
-	qc_debug(hdl, "Try STHYI@LPAR\n");
+	qc_debug(hdl, "Try STHYI syscall\n");
 	if (syscall(sthyi, 0, priv->data, &cc, 0) || cc) {
 		if (errno == ENOSYS) {
-			qc_debug(hdl, "STHYI@LPAR is not available\n");
+			qc_debug(hdl, "STHYI syscall is not available\n");
 			return 0;
 		}
-		qc_debug(hdl, "Error: STHYI@LPAR execution failed: errno='%s', cc=%" PRIu64 "\n", strerror(errno), cc);
+		qc_debug(hdl, "Error: STHYI syscall execution failed: errno='%s', cc=%" PRIu64 "\n", strerror(errno), cc);
 		return -1;
 	}
-	qc_debug(hdl, "STHYI@LPAR succeeded\n");
+	qc_debug(hdl, "STHYI syscall succeeded\n");
 	priv->avail = STHYI_AVAILABLE;
 #endif
 
@@ -281,25 +305,15 @@ static int qc_parse_sthyi_guest(struct qc_handle *gst, struct inf0gst *guest) {
 	return 0;
 }
 
-static int qc_get_num_vm_layers(struct qc_handle *hdl, int *rc) {
-	int i;
-
-	for (hdl = hdl->root, i = 0; hdl != NULL; hdl = hdl->next) {
-		if (*(int *)(hdl->layer) == QC_LAYER_TYPE_ZVM_HYPERVISOR)
-			i++;
-	}
-
-	return i;
-}
-
 /* Returns pointer to the n-th hypervisor handle. num starts at 0, and handles
    are returned in sequence from handle linked list */
 static struct qc_handle *qc_get_HV_layer(struct qc_handle *hdl, int num) {
 	struct qc_handle *h = hdl;
-	int i;
+	int i, type;
 
 	for (hdl = hdl->root, i = 0, num++; hdl != NULL; hdl = hdl->next) {
-		if (*(int *)(hdl->layer) == QC_LAYER_TYPE_ZVM_HYPERVISOR && ++i == num)
+		type = *(int *)(hdl->layer);
+		if ((type == QC_LAYER_TYPE_ZVM_HYPERVISOR || type == QC_LAYER_TYPE_KVM_HYPERVISOR) && ++i == num)
 			return hdl;
 	}
 	qc_debug(h, "Error: Couldn't find HV layer %d, only %d layer(s) found\n", num, i);
@@ -309,7 +323,7 @@ static struct qc_handle *qc_get_HV_layer(struct qc_handle *hdl, int num) {
 
 static int qc_sthyi_process(struct qc_handle *hdl, char *buf) {
 	struct sthyi_priv *priv = (struct sthyi_priv *)buf;
-	int no_hyp_gst, num_vm_layers, i, rc = 0;
+	int no_hyp_gst, i, rc = 0;
 	struct inf0gst *guest[INF0YGMX];
 	struct inf0hyp *hv[INF0YGMX];
 	struct inf0par *partition;
@@ -371,30 +385,14 @@ static int qc_sthyi_process(struct qc_handle *hdl, char *buf) {
 		goto out;
 	}
 
-	num_vm_layers = qc_get_num_vm_layers(hdl, &rc);
-	if (rc != 0) {
-		rc = -2;
-		goto out;
-	}
-
-	if (num_vm_layers != no_hyp_gst) {
-		/* STHYI doesn't support more than 3rd level z/VM */
-		qc_debug(hdl, "Error: /proc/sysinfo reported %d layers, but STHYI only "
-				"covers %d\n", num_vm_layers, no_hyp_gst);
-		rc = -6;
-		goto out;
-	}
-
 	for (i = 0; i < no_hyp_gst; i++) {
 		if ((hdl = qc_get_HV_layer(hdl, i)) == NULL) {
 			rc = -7;
 			goto out;
 		}
-		if (*(int *)(hdl->layer) == QC_LAYER_TYPE_ZVM_HYPERVISOR) {
-			if (qc_parse_sthyi_hypervisor(hdl, hv[i]) || qc_parse_sthyi_guest(hdl->next, guest[i])) {
-				rc = -9;
-				goto out;
-			}
+		if (qc_parse_sthyi_hypervisor(hdl, hv[i]) || qc_parse_sthyi_guest(hdl->next, guest[i])) {
+			rc = -9;
+			goto out;
 		}
 	}
 out:
@@ -508,15 +506,15 @@ static int qc_sthyi_open(struct qc_handle *hdl, char **buf) {
 		/* There is no way for us to check programmatically whether
 		   we're in an LPAR or in a VM, so we simply try out both */
 		if (qc_is_sthyi_available_vm(hdl)) {
-			qc_debug(hdl, "Executing STHYI@VM\n");
+			qc_debug(hdl, "Executing STHYI instruction\n");
 			/* we assume we are not relocated at this spot, between STFLE and STHYI */
 			if (qc_sthyi_vm(priv)) {
-				qc_debug(hdl, "Error: STHYI@VM execution failed\n");
+				qc_debug(hdl, "Error: STHYI instruction execution failed\n");
 				rc = -3;
 				goto out;
 			}
 		} else {
-			qc_debug(hdl, "STHYI@VM is not available\n");
+			qc_debug(hdl, "STHYI instruction is not available\n");
 			rc = qc_sthyi_lpar(hdl, priv);
 		}
 	}

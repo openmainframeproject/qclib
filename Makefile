@@ -4,7 +4,7 @@
 #     major : Backwards compatible changes to the API
 #     minor : Additions leaving the API unmodified
 #     bugfix: Bugfixes only
-VERSION = 1.3.0
+VERSION = 1.3.1
 VERM    = $(shell echo $(VERSION) | cut -d '.' -f 1)
 CFLAGS ?= -g -Wall -O2
 CFILES  = query_capacity.c query_capacity_data.c query_capacity_sysinfo.c query_capacity_ocf.c \

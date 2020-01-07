@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 //_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
@@ -112,7 +112,7 @@ static int qc_debug_file_init(void) {
 				goto out_err;
 			}
 		}
-		qc_debug(NULL, "This is qclib v1.3.0, level 9c8868c, date 2017-10-20 10:15:56 +0200\n");
+		qc_debug(NULL, "This is qclib v1.3.1, level a8efdba, date 2017-12-28 14:00:24 +0100\n");
 	}
 
 	return 0;
@@ -244,7 +244,7 @@ void qc_mark_dump_incomplete(struct qc_handle *hdl, char *missing_component) {
 	int rc;
 	char *cmd;
 
-	if (asprintf(&cmd, "echo %s >> %s/%s", missing_component, qc_dbg_dump_dir,
+	if (asprintf(&cmd, "/bin/echo %s >> %s/%s", missing_component, qc_dbg_dump_dir,
 								QC_DUMP_INCOMPLETE) == -1) {
 		qc_debug(hdl, "Error: Failed to alloc mem to indicate dump as incomplete\n");
 		return;

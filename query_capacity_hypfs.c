@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
@@ -137,7 +137,7 @@ static void qc_dump_hypfs(struct qc_handle *hdl, char *hypfs) {
 	}
 	/* We read all files individually during regular processing, so we can do now is to
 	   copy the content with 'cp -r' */
-	if (asprintf(&cmd, "cp -r %s/hyp %s/cpus %s/systems %s > /dev/null 2>&1",
+	if (asprintf(&cmd, "/bin/cp -r %s/hyp %s/cpus %s/systems %s > /dev/null 2>&1",
 						hypfs, hypfs, hypfs, qc_dbg_dump_dir) == -1) {
 		qc_debug(hdl, "Error: Mem alloc failure, cannot dump textual hypfs\n");
 		qc_mark_dump_incomplete(hdl, "hypfs textual");
@@ -196,7 +196,7 @@ static void qc_dump_hypfs_bin(struct qc_handle *hdl, const char *diag, __u8 *dat
 	if (strcmp(diag, QC_HYPFS_ZVM) == 0) {
 		// if we're on z/VM, we need to make sure that the LPAR file exists, as logic
 		// uses it as a flag to indicate presence of the binary hypfs API
-		if (asprintf(&cmd, "touch %s/%s > /dev/null 2>&1", qc_dbg_dump_dir,
+		if (asprintf(&cmd, "/bin/touch %s/%s > /dev/null 2>&1", qc_dbg_dump_dir,
 								QC_HYPFS_LPAR) == -1) {
 			qc_debug(hdl, "Error: Mem alloc failure, could not touch '%s'. "
 				"Dump will not work without, fix by adding it manually later on.\n",
@@ -947,11 +947,9 @@ static int qc_hypfs_process(struct qc_handle *hdl, char *buf) {
 		goto out;
 	}
 	if (priv->avail == HYPFS_AVAIL_BIN_LPAR) {
-		if (qc_fill_in_hypfs_cec_values_bin(hdl->root, (__u8 *)priv->data) ||
-		    qc_fill_in_hypfs_lpar_values_bin(hdl, (__u8 *)priv->data)) {
-			rc = -1;
-			goto out;
-		}
+		rc = qc_fill_in_hypfs_cec_values_bin(hdl->root, (__u8 *)priv->data) ||
+		    qc_fill_in_hypfs_lpar_values_bin(hdl, (__u8 *)priv->data);
+		goto out;
 	}
 	if (priv->avail == HYPFS_AVAIL_BIN_ZVM) {
        		rc = qc_fill_in_hypfs_zvm_values_bin(hdl, priv);

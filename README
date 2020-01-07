@@ -94,6 +94,13 @@ For enhancements, please describe the proposed change and its benefits.
 Release History:
 ================
 
+1.3.1
+    Bug fixes:
+    - Security: Fix PATH attack vulnerability when dumping (see QC_DEBUG=2)
+    - STHYI: Add fallback for pre-glibc 2.16 (not using getauxval())
+    - Handle mismatching STHYI and /proc/sysinfo layer counts
+    - On LPAR, fix incomplete dump of binary hypfs when textual hypfs is mounted
+
 1.3.0
     Changes:
     - Added STHYI support in LPAR
