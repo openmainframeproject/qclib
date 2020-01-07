@@ -1,11 +1,13 @@
 /* Copyright IBM Corp. 2013, 2015 */
 
 #define _GNU_SOURCE
+#define _BSD_SOURCE
 
 #include <signal.h>
 #include <iconv.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <endian.h>
 
 #include "query_capacity_int.h"
 #include "query_capacity_data.h"
@@ -30,13 +32,16 @@ struct sthyi_priv {
 	int 	avail;
 };
 
+#if defined __s390x__ || __s390__
 static void qc_stfle_signal_handler(int signal) {
 	qc_debug(NULL, "Signal handler invoked with signal %d\n", signal);
 
 	return;
 }
+#endif
 
 static int qc_is_sthyi_available(void) {
+#if defined __s390x__ || __s390__
 	/* initialize for signal handler case */
 	unsigned long long stfle_buffer[(STHYI_FACILITY_BIT/64)+1] __attribute__ ((aligned (8))) = { 0,};
 	sighandler_t old_handler;
@@ -56,9 +61,13 @@ static int qc_is_sthyi_available(void) {
 	signal(SIGILL, old_handler);
 
 	return (stfle_buffer[STHYI_FACILITY_BIT/64] >> (63 - (STHYI_FACILITY_BIT%64))) & 1;
+#else
+	return 0;
+#endif
 }
 
 static int qc_sthyi(char *sthyi_buffer) {
+#if defined __s390x__ || __s390__
 	register unsigned long function_code asm("2") = 0;
 	register unsigned long buffer asm("4") = (unsigned long) sthyi_buffer;
 	register unsigned long return_code asm("5");
@@ -76,6 +85,8 @@ static int qc_sthyi(char *sthyi_buffer) {
 	}
 	/* if cc==-1: exception. never mind, return 0 */
 	/* if cc==3: never mind, r carries return code */
+#endif
+
 	return 0;
 }
 
@@ -85,14 +96,14 @@ static int qc_parse_sthyi_machine(struct qc_handle *cec, iconv_t *cd, struct inf
 	qc_debug_indent_inc();
 	if (machine->infmval1 & INFMPROC) {
 		qc_debug(cec, "Add processor counts information\n");
-		if (qc_set_attr_int(cec, qc_num_cp_dedicated, machine->infmdcps, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_cp_shared, machine->infmscps, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_cp_total, machine->infmdcps + machine->infmscps, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_ifl_dedicated, machine->infmdifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_ifl_shared, machine->infmsifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_ifl_total, machine->infmdifl + machine->infmsifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_cpu_dedicated, machine->infmdcps + machine->infmdifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(cec, qc_num_cpu_shared, machine->infmscps + machine->infmsifl, ATTR_SRC_STHYI))
+		if (qc_set_attr_int(cec, qc_num_cp_dedicated, htobe16(machine->infmdcps), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_cp_shared, htobe16(machine->infmscps), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_cp_total, htobe16(machine->infmdcps) + htobe16(machine->infmscps), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_ifl_dedicated, htobe16(machine->infmdifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_ifl_shared, htobe16(machine->infmsifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_ifl_total, htobe16(machine->infmdifl) + htobe16(machine->infmsifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_cpu_dedicated, htobe16(machine->infmdcps) + htobe16(machine->infmdifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(cec, qc_num_cpu_shared, htobe16(machine->infmscps) + htobe16(machine->infmsifl), ATTR_SRC_STHYI))
 			return -1;
 	}
 
@@ -119,32 +130,32 @@ static int qc_parse_sthyi_partition(struct qc_handle *lpar, iconv_t *cd, struct 
 	qc_debug_indent_inc();
 	if (partition->infpval1 & INFPPROC) {
 		qc_debug(lpar, "Add processor counts information\n");
-		if (qc_set_attr_int(lpar, qc_num_cp_shared, partition->infpscps, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_num_cp_dedicated, partition->infpdcps, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_num_ifl_shared, partition->infpsifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_num_ifl_dedicated, partition->infpdifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_num_cpu_shared, partition->infpscps + partition->infpsifl, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_num_cpu_dedicated, partition->infpdcps + partition->infpdifl, ATTR_SRC_STHYI))
+		if (qc_set_attr_int(lpar, qc_num_cp_shared, htobe16(partition->infpscps), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_num_cp_dedicated, htobe16(partition->infpdcps), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_num_ifl_shared, htobe16(partition->infpsifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_num_ifl_dedicated, htobe16(partition->infpdifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_num_cpu_shared, htobe16(partition->infpscps) + htobe16(partition->infpsifl), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_num_cpu_dedicated, htobe16(partition->infpdcps) + htobe16(partition->infpdifl), ATTR_SRC_STHYI))
 			return -1;
 	}
 
 	if (partition->infpval1 & INFPWBCC) {
 		qc_debug(lpar, "Add weight-based capped capacity information\n");
-		if (qc_set_attr_int(lpar, qc_cp_weight_capping, partition->infpwbcp, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_ifl_weight_capping, partition->infpwbif, ATTR_SRC_STHYI))
+		if (qc_set_attr_int(lpar, qc_cp_weight_capping, htobe32(partition->infpwbcp), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_ifl_weight_capping, htobe32(partition->infpwbif), ATTR_SRC_STHYI))
 			return -2;
 	}
 
 	if (partition->infpval1 & INFPACC) {
 		qc_debug(lpar, "Add absolute capped capacity information\n");
-		if (qc_set_attr_int(lpar, qc_cp_absolute_capping, partition->infpabcp, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(lpar, qc_ifl_absolute_capping, partition->infpabif, ATTR_SRC_STHYI))
+		if (qc_set_attr_int(lpar, qc_cp_absolute_capping, htobe32(partition->infpabcp), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(lpar, qc_ifl_absolute_capping, htobe32(partition->infpabif), ATTR_SRC_STHYI))
 			return -3;
 	}
 
 	if (partition->infpval1 & INFPPID) {
 		qc_debug(lpar, "Add partition ID information\n");
-		if (qc_set_attr_int(lpar, qc_partition_number, partition->infppnum, ATTR_SRC_STHYI) ||
+		if (qc_set_attr_int(lpar, qc_partition_number, htobe16(partition->infppnum), ATTR_SRC_STHYI) ||
 		    qc_set_attr_ebcdic_string(lpar, qc_layer_name, partition->infppnam, sizeof(partition->infppnam), cd, ATTR_SRC_STHYI))
 			return -4;
 	}
@@ -162,41 +173,22 @@ static int qc_parse_sthyi_hypervisor(struct qc_handle *hdl, iconv_t *cd, struct 
 	if (qc_set_attr_int(hdl, qc_hardlimit_consumption, (hv->infyflg1 & INFYLMCN) ? 1 : 0, ATTR_SRC_STHYI) ||
 	    qc_set_attr_ebcdic_string(hdl, qc_layer_name, hv->infysyid, sizeof(hv->infysyid), cd, ATTR_SRC_STHYI) ||
 	    qc_set_attr_ebcdic_string(hdl, qc_cluster_name, hv->infyclnm, sizeof(hv->infyclnm), cd, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_cpu_total, hv->infyscps + hv->infydcps + hv->infysifl + hv->infydifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_cpu_shared, hv->infyscps + hv->infysifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_cpu_dedicated, hv->infydcps + hv->infydifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_cp_total, hv->infyscps + hv->infydcps, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_cp_shared, hv->infyscps, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_cp_dedicated, hv->infydcps, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_ifl_total, hv->infysifl + hv->infydifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_ifl_shared, hv->infysifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, hv->infydifl, ATTR_SRC_STHYI))
+	    qc_set_attr_int(hdl, qc_num_cpu_total, htobe16(hv->infyscps) + htobe16(hv->infydcps) + htobe16(hv->infysifl) + htobe16(hv->infydifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_cpu_shared, htobe16(hv->infyscps) + htobe16(hv->infysifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_cpu_dedicated, htobe16(hv->infydcps) + htobe16(hv->infydifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_cp_total, htobe16(hv->infyscps) + htobe16(hv->infydcps), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_cp_shared, htobe16(hv->infyscps), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_cp_dedicated, htobe16(hv->infydcps), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_total, htobe16(hv->infysifl) + htobe16(hv->infydifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_shared, htobe16(hv->infysifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, htobe16(hv->infydifl), ATTR_SRC_STHYI))
 		return -2;
-
-	return 0;
-}
-
-/* Insert new layer 'inserted_hdl' of type 'type' before 'hdl'.
-   I.e. it cannot insert new layers at beginning or end */
-static int qc_insert_handle(struct qc_handle *hdl, struct qc_handle **inserted_hdl, int type) {
-	struct qc_handle *prev_hdl = qc_get_prev_handle(hdl);
-
-	if (!prev_hdl)
-		return -1;
-	if (qc_new_handle(hdl, inserted_hdl, hdl->layer_no, type))
-		return -2;
-	(*inserted_hdl)->next = hdl;
-	prev_hdl->next = (*inserted_hdl);
-	// adjust layer_no in remaining layers
-	for (; hdl != NULL; hdl = hdl->next)
-		hdl->layer_no++;
 
 	return 0;
 }
 
 static int qc_parse_sthyi_guest(struct qc_handle *gst, iconv_t *cd, struct inf0gst *guest) {
 	struct qc_handle *pool_hdl;
-	char src;
 	int rc;
 
 	qc_debug(gst, "Add Guest values from STHYI\n");
@@ -205,27 +197,27 @@ static int qc_parse_sthyi_guest(struct qc_handle *gst, iconv_t *cd, struct inf0g
 	    qc_set_attr_int(gst, qc_cp_dispatch_limithard, (guest->infgflg1 & INFGCPLH) ? 1 : 0, ATTR_SRC_STHYI) ||
 	    qc_set_attr_int(gst, qc_ifl_dispatch_limithard, (guest->infgflg1 & INFGIFLH) ? 1 : 0, ATTR_SRC_STHYI) ||
 	    qc_set_attr_ebcdic_string(gst, qc_layer_name, guest->infgusid, sizeof(guest->infgusid), cd, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_cp_shared, guest->infgscps, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_cp_dedicated, guest->infgdcps, ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_cp_shared, htobe16(guest->infgscps), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_cp_dedicated, htobe16(guest->infgdcps), ATTR_SRC_STHYI) ||
 	    qc_set_attr_int(gst, qc_cp_dispatch_type, guest->infgcpdt, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_cp_capped_capacity, guest->infgcpcc, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_ifl_shared, guest->infgsifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_ifl_dedicated, guest->infgdifl, ATTR_SRC_STHYI))
+	    qc_set_attr_int(gst, qc_cp_capped_capacity, htobe32(guest->infgcpcc), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_ifl_shared, htobe16(guest->infgsifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_ifl_dedicated, htobe16(guest->infgdifl), ATTR_SRC_STHYI))
 		return -1;
 
 	if ((guest->infgsifl > 0 || guest->infgdifl > 0) &&
 	    qc_set_attr_int(gst, qc_ifl_dispatch_type, guest->infgifdt, ATTR_SRC_STHYI))
 		return -2;
 
-	if (qc_set_attr_int(gst, qc_ifl_capped_capacity, guest->infgifcc, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_cp_total, guest->infgscps + guest->infgdcps, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_ifl_total, guest->infgsifl + guest->infgdifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_cpu_dedicated, guest->infgdcps + guest->infgdifl, ATTR_SRC_STHYI) ||
-	    qc_set_attr_int(gst, qc_num_cpu_shared, guest->infgscps + guest->infgsifl, ATTR_SRC_STHYI))
+	if (qc_set_attr_int(gst, qc_ifl_capped_capacity, htobe32(guest->infgifcc), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_cp_total, htobe16(guest->infgscps) + htobe16(guest->infgdcps), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_ifl_total, htobe16(guest->infgsifl) + htobe16(guest->infgdifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_cpu_dedicated, htobe16(guest->infgdcps) + htobe16(guest->infgdifl), ATTR_SRC_STHYI) ||
+	    qc_set_attr_int(gst, qc_num_cpu_shared, htobe16(guest->infgscps) + htobe16(guest->infgsifl), ATTR_SRC_STHYI))
 		return -3;
 
-	if ((qc_is_attr_set_int(gst, qc_num_cpu_total, &src)) &&
-	    qc_set_attr_int(gst, qc_num_cpu_total, guest->infgscps + guest->infgdcps + guest->infgsifl + guest->infgdifl, ATTR_SRC_STHYI))
+	if ((qc_is_attr_set_int(gst, qc_num_cpu_total)) &&
+	    qc_set_attr_int(gst, qc_num_cpu_total, htobe16(guest->infgscps) + htobe16(guest->infgdcps) + htobe16(guest->infgsifl) + htobe16(guest->infgdifl), ATTR_SRC_STHYI))
 		return -4;
 
 	/* if pool name is empty then we're done */
@@ -241,8 +233,8 @@ static int qc_parse_sthyi_guest(struct qc_handle *gst, iconv_t *cd, struct inf0g
 		    qc_set_attr_int(pool_hdl, qc_cp_capacity_cap, (guest->infgpflg & INFGPCPC) ? 1 : 0, ATTR_SRC_STHYI) ||
 		    qc_set_attr_int(pool_hdl, qc_ifl_limithard_cap, (guest->infgpflg & INFGPILH) ? 1 : 0, ATTR_SRC_STHYI) ||
 		    qc_set_attr_int(pool_hdl, qc_ifl_capacity_cap, (guest->infgpflg & INFGPIFC) ? 1 : 0, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(pool_hdl, qc_cp_capped_capacity, guest->infgpccc, ATTR_SRC_STHYI) ||
-		    qc_set_attr_int(pool_hdl, qc_ifl_capped_capacity, guest->infgpicc, ATTR_SRC_STHYI))
+		    qc_set_attr_int(pool_hdl, qc_cp_capped_capacity, htobe32(guest->infgpccc), ATTR_SRC_STHYI) ||
+		    qc_set_attr_int(pool_hdl, qc_ifl_capped_capacity, htobe32(guest->infgpicc), ATTR_SRC_STHYI))
 			return -6;
 		rc = 0;
 	}
@@ -303,8 +295,8 @@ static int qc_sthyi_process(struct qc_handle *hdl, iconv_t *cd, char *buf) {
 		goto out;	// No data: nothing we can do about
 	}
 	header = (struct inf0hdr *) sthyi_buffer;
-	machine = (struct inf0mac *) (sthyi_buffer + header->infmoff);
-	partition = (struct inf0par *) (sthyi_buffer + header->infpoff);
+	machine = (struct inf0mac *) (sthyi_buffer + htobe16(header->infmoff));
+	partition = (struct inf0par *) (sthyi_buffer + htobe16(header->infpoff));
 	no_hyp_gst = (int)header->infhygct;
 	if (no_hyp_gst > INF0YGMX) {
 		qc_debug(hdl, "Error: STHYI reports %d layers, exceeding the supported "
@@ -313,16 +305,16 @@ static int qc_sthyi_process(struct qc_handle *hdl, iconv_t *cd, char *buf) {
 		goto out;
 	}
 	if (no_hyp_gst > 0) {
-		hv[0] = (struct inf0hyp *)(sthyi_buffer + header->infhoff1);
-		guest[0] = (struct inf0gst *)(sthyi_buffer + header->infgoff1);
+		hv[0] = (struct inf0hyp *)(sthyi_buffer + htobe16(header->infhoff1));
+		guest[0] = (struct inf0gst *)(sthyi_buffer + htobe16(header->infgoff1));
 	}
 	if (no_hyp_gst > 1) {
-		hv[1] = (struct inf0hyp *)(sthyi_buffer + header->infhoff2);
-		guest[1] = (struct inf0gst *)(sthyi_buffer + header->infgoff2);
+		hv[1] = (struct inf0hyp *)(sthyi_buffer + htobe16(header->infhoff2));
+		guest[1] = (struct inf0gst *)(sthyi_buffer + htobe16(header->infgoff2));
 	}
 	if (no_hyp_gst > 2) {
-		hv[2] = (struct inf0hyp *)(sthyi_buffer + header->infhoff3);
-		guest[2] = (struct inf0gst *)(sthyi_buffer + header->infgoff3);
+		hv[2] = (struct inf0hyp *)(sthyi_buffer + htobe16(header->infhoff3));
+		guest[2] = (struct inf0gst *)(sthyi_buffer + htobe16(header->infgoff3));
 	}
 
 	num_vm_layers = qc_get_num_vm_layers(hdl, &rc);
@@ -453,6 +445,7 @@ out:
 
 static int qc_sthyi_open(struct qc_handle *hdl, char **buf) {
 	struct sthyi_priv *priv = NULL;
+	void *p = NULL;
 	int rc = 0;
 
 	*buf = NULL;
@@ -464,12 +457,13 @@ static int qc_sthyi_open(struct qc_handle *hdl, char **buf) {
 		goto out;
 	}
 	bzero(priv, sizeof(struct sthyi_priv));
-	*buf = (char*)priv;
-	if (posix_memalign((void**)&priv->data, STHYI_BUF_ALIGNMENT, STHYI_BUF_SIZE)) {
+	*buf = (char *)priv;
+	if (posix_memalign(&p, STHYI_BUF_ALIGNMENT, STHYI_BUF_SIZE)) {
 		qc_debug(hdl, "Error: posix_memalign() failed\n");
 		rc = -2;
 		goto out;
 	}
+	priv->data = (char *)p;
 	bzero(priv->data, STHYI_BUF_SIZE);
 
 	if (qc_dbg_use_dump) {

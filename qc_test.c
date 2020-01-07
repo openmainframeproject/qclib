@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <getopt.h>
+
 #include "query_capacity.h"
 
 
@@ -657,44 +659,52 @@ void print_kvmguest_information(void *hdl, int layer, int indent) {
 	verify_nonexistence(hdl, qc_cp_absolute_capping, layer);
 }
 
-int get_handle(void **hdl, int *layers) {
+int get_handle(void **hdl, int *layers, int quiet) {
 	int rc;
 
 	*hdl = qc_open(&rc);
 	if (rc < 0) {
-		printf("Error: Could not open configuration, rc=%d\n", rc);
-		return -1;
+		if (!quiet)
+			printf("Error: Could not open configuration, rc=%d\n", rc);
+		return 1;
 	}
 	if (rc > 0) {
-		printf("Warning: Configuration could not be opened completely, rc=%d\n", rc);
-		err_cnt++;
+		if (!quiet)
+			printf("Warning: Configuration could not be opened completely, rc=%d\n", rc);
+		return 2;
 	}
 	if (!*hdl) {
-		printf("Error: Could not open configuration\n");
-		return -2;
+		if (!quiet)
+			printf("Error: Could not open configuration\n");
+		return 3;
 	}
 	*layers = qc_get_num_layers(*hdl, &rc);
 	if (rc != 0) {
-		printf("Error: Could not retrieve number of layers, rc=%d\n", rc);
-		return -3;
+		if (!quiet)
+			printf("Error: Could not retrieve number of layers, rc=%d\n", rc);
+		return 4;
 	}
 	if (*layers < 0) {
-		printf("Error: Invalid number of layers: %d\n", *layers);
-		return -4;
+		if (!quiet)
+			printf("Error: Invalid number of layers: %d\n", *layers);
+		return 5;
 	}
 
 	return 0;
 }
 
-int main() {
-	int layers, i, indent, etype, rc;
-	void *hdl, *hdl2 = NULL;
+// Retrieve handle, dump data, and return *hdl to leave it at the caller's discretion when to close it
+static void *run_test(int quiet, int fulltest) {
+	int indent = 0, layers, i, etype;
+	void *hdl = NULL, *hdl2 = NULL;
 
-	indent = 0;
-	if ((rc = get_handle(&hdl, &layers)) != 0) {
+	err_cnt = 0;
+	if (get_handle(&hdl, &layers, quiet) != 0) {
 		err_cnt++;
 		goto out;
 	}
+	if (quiet)
+		goto out;
 	print_separator(indent);
 	printf("We are running %i layer(s)\n", layers);
 	printf("\n");
@@ -707,9 +717,8 @@ int main() {
 		if (i > 0)
 			print_separator(indent);
 		indent += 2;
-		rc = qc_get_attribute_int(hdl, qc_layer_type_num, i, &etype);
-		if (rc <= 0) {
-			printf("Error: Failed to retrieve 'qc_layer_type_num', rc=%d\n", rc);
+		if (qc_get_attribute_int(hdl, qc_layer_type_num, i, &etype) <= 0) {
+			printf("Error: Failed to retrieve 'qc_layer_type_num'\n");
 			goto out;
 		}
 		switch (etype) {
@@ -740,26 +749,84 @@ int main() {
 			err_cnt++;
 		}
 	}
-	// finally, get another handle before closing the existing one
-	if ((rc = get_handle(&hdl2, &layers)) != 0)
-		err_cnt++;
+	if (fulltest) {
+		// finally, get another handle before closing the existing one
+		if (get_handle(&hdl2, &layers, quiet) != 0)
+			err_cnt++;
+	}
 
 out:
-	qc_close(hdl);
+	if (fulltest) {
+		qc_close(hdl);
+		hdl = hdl2;
+	}
 	/* disable debugging on final qc_close() call to have tracing properly disabled
 	   without memleaks */
 	setenv("QC_DEBUG", "0", 1);
 	setenv("QC_AUTODUMP", "0", 1);
-	qc_close(hdl2);
-	print_separator(indent);
-	if (!err_cnt)
-		printf("Done, no errors detected\n");
-	else
-		printf("WARNING: %d error(s) detected\n", err_cnt);
+	if (!quiet) {
+		print_separator(indent);
+		if (!err_cnt)
+			printf("Done, no errors detected\n");
+		else
+			printf("%d error(s) detected\n", err_cnt);
+		printf("\n");
+	}
 
+	return hdl;
+}
 
+static void print_help() {
 	printf("\n");
+	printf("Usage: qc_test [-q] [-h] [<dump>*]\n");
+	printf("\n");
+	printf("Print live system information and perform self-test. Specify dumps to display\n");
+	printf("previously dumped data instead (but skipping a minor part of the self-test).\n");
+	printf("\n");
+	printf("  -h, --help       Print usage information and exit\n");
+	printf("  -q, --quiet      Quiet mode: Only gather system informtion; skip self-test and\n");
+	printf("                   suppress any output.\n");
+	printf("\n");
+}
+
+int main(int argc, char **argv) {
+	static struct option long_options[] = {
+		{ "help",  no_argument, NULL, 'h'},
+		{ "quiet", no_argument, NULL, 'q'},
+		{ 0,       0,           0,    0  }
+	};
+	int i, j, c, quiet = 0, rc = 0;
+	void **hdls = NULL;
+
+	while ((c = getopt_long(argc, argv, "hq", long_options, NULL)) != EOF) {
+		switch (c) {
+		case 'h': print_help();
+			  return 0;
+		case 'q': quiet = 1;
+			  break;
+		default:  print_help();
+			  return 1;
+		}
+	}
+	setenv("QC_CHECK_CONSISTENCY", "1", 0);
+	hdls = malloc(argc * sizeof(void *));
+	if (!hdls)
+		return 1;
+	if (optind < argc) {
+		// dump(s) specified on command line - dump all, and close handels later on
+		for (j = 0, i = optind; i < argc; ++i, ++j) {
+			setenv("QC_USE_DUMP", argv[i], 1);
+                        if ((hdls[j] = run_test(quiet, 0)) == NULL)
+				rc++;
+		}
+		for (--j; j >= 0; --j)
+			qc_close(hdls[j]);
+	} else {
+		if ((hdls[0] = run_test(quiet, 1)) == NULL)
+			rc = 1;
+		qc_close(hdls[0]);
+	}
+	free(hdls);
 
 	return rc;
 }
-

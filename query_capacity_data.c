@@ -525,6 +525,36 @@ int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no
 	return 0;
 }
 
+int qc_insert_handle(struct qc_handle *hdl, struct qc_handle **inserted_hdl, int type) {
+	struct qc_handle *prev_hdl = qc_get_prev_handle(hdl);
+
+	if (!prev_hdl)
+		return -1;
+	if (qc_new_handle(hdl, inserted_hdl, hdl->layer_no, type))
+		return -2;
+	(*inserted_hdl)->next = hdl;
+	prev_hdl->next = *inserted_hdl;
+	// adjust layer_no in remaining layers
+	for (; hdl != NULL; hdl = hdl->next)
+		hdl->layer_no++;
+
+	return 0;
+}
+
+int qc_append_handle(struct qc_handle *hdl, struct qc_handle **appended_hdl, int type) {
+	struct qc_handle *next_hdl = hdl->next;
+
+	if (qc_new_handle(hdl, appended_hdl, hdl->layer_no + 1, type))
+		return -1;
+	hdl->next = *appended_hdl;
+	(*appended_hdl)->next = next_hdl;
+	// adjust layer_no in remaining layers
+	for (hdl = next_hdl; hdl != NULL; hdl = hdl->next)
+		hdl->layer_no++;
+
+	return 0;
+}
+
 static char *qc_set_attr(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type, char src) {
 	struct qc_attr *attr_list = hdl->attr_list;
 	int count;
@@ -563,34 +593,48 @@ int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char
 	return 0;
 }
 
-// Sets attribute 'id' in layer as pointed to by 'hdl'
+// Sets string attribute 'id' in layer as pointed to by 'hdl', stripping trailing blanks
 int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, char *str, unsigned int str_len, char src) {
-	char *ptr;
+	char *ptr, *p;
 
 	if ((ptr = qc_set_attr(hdl, id, string, src)) == NULL)
 		return -1;
 	ptr[str_len] = '\0';
 	strncpy(ptr, str, str_len);
+	// strip trailing blanks
+	for (p = &ptr[str_len - 1]; *p == ' ' && p !=  ptr; --p)
+		*p = '\0';
 
 	return 0;
 }
 
-// Sets attribute 'id' in layer as pointed to by 'hdl'
+// Sets ebcdic string attribute 'id' in layer as pointed to by 'hdl'
+// Note: Copy content to temporary buffer for conversion first, as we do not want to modify the source data.
 int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigned char *str,
 			      unsigned int str_len, iconv_t *cd, char src) {
 	char *buf;
+	int rc;
 
-	if (qc_set_attr_string(hdl, id, (char *)str, str_len, src))
+	buf = malloc(str_len + 1);
+	if (!buf) {
+		qc_debug(hdl, "Error: Memory allocation error\n");
 		return -1;
-	buf = qc_get_attr_value_string(hdl, id);
+	}
+	memset(buf, '\0', str_len + 1);
+	memcpy(buf, str, str_len);
+	if ((rc = qc_ebcdic_to_ascii(hdl, cd, buf, str_len)) == 0) {
+		if (strlen(buf) && qc_set_attr_string(hdl, id, (char *)buf, str_len, src))
+			rc = -2;
+	}
+	free(buf);
 
-	return qc_ebcdic_to_ascii(hdl, cd, buf, str_len);
+	return rc;
 }
 
 // Certain parts assume that empty strings might also consist of spaces
 // Returns >0 if not empty, 0 if empty, and <0 for errors
 int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen, iconv_t *cd) {
-	char str[9];	// suffices for all users of this function
+	char str[9] = "";	// suffices for all users of this function
 
 	if (*buf == '\0')
 		return 0;
@@ -606,31 +650,29 @@ int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsig
 }
 
 // Sets attribute 'id' in layer as pointed to by 'hdl'
-static int qc_is_attr_set(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type, char *src) {
+static int qc_is_attr_set(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type) {
 	struct qc_attr *attr_list = hdl->attr_list;
 	int count = 0;
 
 	while (attr_list[count].offset >= 0) {
-		if (attr_list[count].id == id && attr_list[count].type == type) {
-			*src = hdl->src[count];
+		if (attr_list[count].id == id && attr_list[count].type == type)
 			return hdl->attr_present[count];
-		}
 		count++;
 	}
 
 	return 0;
 }
 
-int qc_is_attr_set_int(struct qc_handle *hdl, enum qc_attr_id id, char *src) {
-	return qc_is_attr_set(hdl, id, integer, src);
+int qc_is_attr_set_int(struct qc_handle *hdl, enum qc_attr_id id) {
+	return qc_is_attr_set(hdl, id, integer);
 }
 
-int qc_is_attr_set_float(struct qc_handle *hdl, enum qc_attr_id id, char *src) {
-	return qc_is_attr_set(hdl, id, floatingpoint, src);
+int qc_is_attr_set_float(struct qc_handle *hdl, enum qc_attr_id id) {
+	return qc_is_attr_set(hdl, id, floatingpoint);
 }
 
-int qc_is_attr_set_string(struct qc_handle *hdl, enum qc_attr_id id, char *src) {
-	return qc_is_attr_set(hdl, id, string, src);
+int qc_is_attr_set_string(struct qc_handle *hdl, enum qc_attr_id id) {
+	return qc_is_attr_set(hdl, id, string);
 }
 
 struct qc_handle *qc_get_root_handle(struct qc_handle *hdl) {
@@ -674,4 +716,27 @@ float *qc_get_attr_value_float(struct qc_handle *hdl, enum qc_attr_id id) {
 
 char *qc_get_attr_value_string(struct qc_handle *hdl, enum qc_attr_id id) {
 	return (char *)qc_get_attr_value(hdl, id, string);
+}
+
+static char qc_get_attr_value_src(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type) {
+	struct qc_attr *attr_list = hdl->attr_list;
+	int count;
+
+	for (count = 0; attr_list[count].offset >= 0; ++count)
+		if (attr_list[count].id == id && attr_list[count].type == type)
+			return hdl->src[count];
+
+	return 'x';
+}
+
+char qc_get_attr_value_src_int(struct qc_handle *hdl, enum qc_attr_id id) {
+	return qc_get_attr_value_src(hdl, id, integer);
+}
+
+char qc_get_attr_value_src_float(struct qc_handle *hdl, enum qc_attr_id id) {
+	return qc_get_attr_value_src(hdl, id, floatingpoint);
+}
+
+char qc_get_attr_value_src_string(struct qc_handle *hdl, enum qc_attr_id id) {
+	return qc_get_attr_value_src(hdl, id, string);
 }

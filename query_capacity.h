@@ -255,7 +255,10 @@ enum qc_cappings {
 
 /** \enum qc_attr_id */
 enum qc_attr_id {
-	/** Adjustment factor, see layer tables for details */
+	/** The adjustment factor indicates the maximum percentage of the machine (in parts of 1000) that could be
+	    used by the primary processor type in the worst case by the respective layer, taking cappings and other
+	    limiting factors into consideration.<br>
+	    Note: This value can lead to wrong conclusions for layers that utilize more than one processor type! */
 	qc_adjustment = 0,
 	/** Capability rating, see \c STSI instruction in [2] */
 	qc_capability = 1,
@@ -392,6 +395,8 @@ enum qc_attr_id {
  *   unless \c QC_DEBUG was set to a value >0<BR>
  * - \c QC_USE_DUMP: To run with a previous dump instead of live data, point this
  *   environment variable to a directory containing the dump data.
+ * - \c QC_CHECK_CONSISTENCY: Check data for consistency. Recommended for debugging
+ *   scenarios only.
  *
  * @see qc_close()
  *

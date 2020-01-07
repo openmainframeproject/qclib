@@ -20,7 +20,19 @@
 #define ATTR_SRC_SYSINFO	'S'
 #define ATTR_SRC_HYPFS		'H'
 #define ATTR_SRC_STHYI		'V'
-#define ATTR_SRC_UNDEF		0
+#define ATTR_SRC_UNDEF		'_'
+
+#ifndef htobe16	// fallbacks for systems with a glibc < 2.9
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+	#define htobe16(x)	bswap_16(x)
+	#define htobe32(x)	bswap_32(x)
+	#define htobe64(x)	bswap_64(x)
+#else
+	#define htobe16(x)	x
+	#define htobe32(x)	x
+	#define htobe64(x)	x
+#endif // __BYTE_ORDER
+#endif // htobe32
 
 struct qc_handle {
 	void		 *layer;	// holds a copy of the respective *_values struct (see below),
@@ -48,6 +60,11 @@ extern struct qc_data_src sysinfo, hypfs, sthyi;
 int qc_ebcdic_to_ascii(struct qc_handle *hdl, iconv_t *cd, char *inbuf, size_t insz);
 int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen, iconv_t *cd);
 int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no, int layer_type);
+// Insert new layer 'inserted_hdl' of type 'type' before 'hdl'. Won't support inserting a new root
+int qc_insert_handle(struct qc_handle *hdl, struct qc_handle **inserted_hdl, int type);
+// Insert new layer 'appended_hdl' of type 'type' after 'hdl'
+int qc_append_handle(struct qc_handle *hdl, struct qc_handle **appended_hdl, int type);
+
 struct qc_handle *qc_get_root_handle(struct qc_handle *hdl);
 struct qc_handle *qc_get_prev_handle(struct qc_handle *hdl);
 
@@ -64,7 +81,6 @@ void qc_mark_dump_incomplete(struct qc_handle *hdl, char *missing_component);
 
 /* Build Customization */
 #define CONFIG_DEBUG_TIMESTAMPS
-#define CONFIG_CONSISTENCY_CHECK
 
 #ifdef CONFIG_DEBUG_TIMESTAMPS
 #define qc_debug(hdl, arg, ...)	if (qc_dbg_level > 0) { \

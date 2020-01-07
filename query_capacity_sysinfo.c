@@ -149,8 +149,8 @@ static void qc_sysinfo_close(struct qc_handle *hdl, char *sysinfo) {
 	free(sysinfo);
 }
 
-/* Whenever we're using strtok() to parse sysinfo, we're messing up the string, since
-   strtok() will insert '\0's, so this function will create a fresh copy to work on. */
+/* Whenever we're using strtok_r() to parse sysinfo, we're messing up the string, since
+   strtok_r() will insert '\0's, so this function will create a fresh copy to work on. */
 static char *qc_copy_sysinfo(struct qc_handle *hdl, char *sysinfo) {
 	char *rc;
 
@@ -160,186 +160,127 @@ static char *qc_copy_sysinfo(struct qc_handle *hdl, char *sysinfo) {
 	return rc;
 }
 
-/* Returns 0, if no VM detected in sysinfo. returns 1, if one VM layer
- * detected, etc.
- * Returns <0 in case of an error. */
-static int qc_get_sysinfo_highest_vm_layer(struct qc_handle *hdl, char *sysinfo) {
-	char *line = NULL, *start, *sysi = NULL;
-	int layer = -1, i;
-
-	qc_debug_indent_inc();
-	if ((start = sysi = qc_copy_sysinfo(hdl, sysinfo)) == NULL) {
-		layer = -3;
+#define QC_SYSINFO_PARSE_LINE_STR_NOCONT(hdl, str, strlen, id) \
+	if (sscanf(*line, str, str_buf) > 0 && qc_set_attr_string(hdl, id, str_buf, strlen, ATTR_SRC_SYSINFO)) \
 		goto out;
-	}
-
-	while ((line = strtok(start, qc_sysinfo_delim)) != NULL) {
-		start = NULL;
-		if (sscanf(line, "VM%02d", &i) > 0)
-			layer = MAX(layer, i);
-	}
-	qc_debug(hdl, "Found VM on layer %d\n", layer + 1);
-out:
-	qc_debug_indent_dec();
-	free(sysi);
-
-	return layer + 1;
-}
-
-/* Returns 0 if cp ID was found, !=0 otherwise */
-static int qc_get_cp_id(struct qc_handle *hdl, int layer, char *cp_id, size_t cp_id_len, char *sysinfo) {
-	char buf_cp[] = "VMxx Control Program: %16[^\001]s\n";
-	char *line, *start, *sysi = NULL;
-	int rc = 0;
-
-	/* make sure sscanf() later on cannot overflow */
-	if (cp_id_len < 17) {
-		qc_debug(hdl, "Internal Error: Called qc_get_cp_id() with cp_id_len=%zd (<17)\n",
-				cp_id_len);
-		return -1;
-	}
-	buf_cp[2] = '0' + layer/10;
-	buf_cp[3] = '0' + layer%10;
-	if ((start = sysi = qc_copy_sysinfo(hdl, sysinfo)) == NULL)
-		return -2;
-	while ((line = strtok(start, qc_sysinfo_delim)) != NULL && !rc) {
-		start = NULL;
-		if ((rc = sscanf(line, buf_cp, cp_id)) > 0)
-			break;
-	}
-	free(sysi);
-
-	return !rc;
-}
-
-#define QC_PARSE_SYSINFO_VM_LINE_STR(name, strlen, var) \
-	if (sscanf(line, buf_##name, string_buffer) > 0) { \
-		if (qc_set_attr_string(hdl, var, string_buffer, strlen, ATTR_SRC_SYSINFO)) { \
-			rc = -10; \
+#define QC_SYSINFO_PARSE_LINE_STR(hdl, str, strlen, id) \
+	if (sscanf(*line, str, str_buf) > 0) { \
+		if (qc_set_attr_string(hdl, id, str_buf, strlen, ATTR_SRC_SYSINFO)) \
 			goto out; \
-		} \
-		if ((line = strtok(start, qc_sysinfo_delim)) == NULL) \
-			continue; \
+		continue; \
 	}
-#define QC_PARSE_SYSINFO_VM_LINE_NUM(hdl, name, var) \
-	if (sscanf(line, buf_##name, &int_buffer) > 0) { \
-		if (qc_set_attr_int(hdl, var, int_buffer, ATTR_SRC_SYSINFO)) { \
-			rc = -11; \
+#define QC_SYSINFO_PARSE_LINE_INT(hdl, str, id) \
+	if (sscanf(*line, str, &int_buf) > 0) { \
+		if (qc_set_attr_int(hdl, id, int_buf, ATTR_SRC_SYSINFO)) \
 			goto out; \
-		} \
-		if ((line = strtok(start, qc_sysinfo_delim)) == NULL) \
-			continue; \
+		continue; \
 	}
-static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, int layers, char *sysinfo) {
-	char buf_name[]     = "VMxx Name: %8[^\n]";	// 8 << STR_BUF_SIZE (prevents overflow in sscanf())
-	char buf_ext_name[] = "VMxx Extended Name: %256[^\n]";	// 256 < STR_BUF_SIZE (prevents overflow in sscanf())
-	char buf_uuid[]     = "VMxx UUID: %36s";	// 36 << STR_BUF_SIZE (prevents overflow in sscanf())
-	char buf_cpu_tot[]  = "VMxx CPUs Total: %i";
-	char buf_cpu_conf[] = "VMxx CPUs Configured: %i";
-	char buf_cpu_stby[] = "VMxx CPUs Standby: %i";
-	char buf_cpu_resv[] = "VMxx CPUs Reserved: %i";
-	char buf_adj[]      = "VMxx Adjustment: %i";
-	char *line = NULL, *start, c, *sysi = NULL;
-	char string_buffer[STR_BUF_SIZE];
+#define QC_SYSINFO_PARSE_LINE_FLOAT(hdl, str, id) \
+	if (sscanf(*line, str, &float_buf)) { \
+		if (qc_set_attr_float(hdl, id, float_buf, ATTR_SRC_SYSINFO)) \
+			goto out; \
+		continue; \
+	}
+static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char **line) {
+	char str_buf[STR_BUF_SIZE], layer_name[STR_BUF_SIZE];
 	struct qc_handle *guesthdl = NULL, *hosthdl = NULL;
-	int i, j, rc = 0, int_buffer, guesttype, hosttype;
+	int i, j, rc = -1, int_buf, guesttype, hosttype;
+	char vmxx[] = "VMxx ";
+	char c, *sysi = NULL;
 
 	qc_debug(hdl, "Retrieve /proc/sysinfo information for VM\n");
 	qc_debug_indent_inc();
-	for (i = layers - 1; i >= 0; i--) {
-		if (qc_get_cp_id(hdl, i, string_buffer, STR_BUF_SIZE, sysinfo)) {
-			qc_debug(hdl, "Error: Failed to retrieve CP ID from /proc/sysinfo\n");
-			rc = -1;
+	for (i = 0; *line && i < 100; i++) {	// /proc/sysinfo cannot go beyond 99 layers of VM
+		for (j = 2, c = '0' + i/10; j <= 3; ++j, c = '0' + i%10)
+			vmxx[j] = c;
+		// Parse file till we find control program ID and name (which precedes)
+		// Note: strtok_r will skip empty lines - hence we can't start out reading the next line
+		//       start of the loop, or we'd we skipping a line when looping in the big loop
+		layer_name[0] = '\0';
+		do {
+			if (strncmp(*line, vmxx, 5) != 0)
+				continue;	// fast-forward till eof
+			*line += 5;
+			sysi = NULL;
+			// Note: %x[^\n] can create trailing blanks, but unavoidable, since some names *can* contain blanks
+			if (layer_name[0] == '\0' && (rc = sscanf(*line, "Name: %8[^\n]", layer_name))) {
+				if (rc < 0)
+					break;
+			}
+			if ((rc = sscanf(*line, "Control Program: %16[^\001]s", str_buf)) > 0)
+				break;
+		} while (!rc && (*line = strtok_r(sysi, qc_sysinfo_delim, sptr)) != NULL);
+		if (!*line) {	// end of file reached, but no VM layers found
+			rc = 0;
 			goto out;
 		}
-		if (!strncmp(string_buffer, "z/VM", strlen("z/VM"))) {
+		if (!rc) {
+			qc_debug(hdl, "Error: Failed to retrieve CP ID from /proc/sysinfo\n");
+			goto out;
+		}
+		rc = -2;
+		if (!strncmp(str_buf, "z/VM", strlen("z/VM"))) {
 			hosttype = QC_LAYER_TYPE_ZVM_HYPERVISOR;
 			guesttype = QC_LAYER_TYPE_ZVM_GUEST;
 			qc_debug(hdl, "Layer %2d: z/VM-host\n", hdl->layer_no + 1);
 			qc_debug(hdl, "Layer %2d: z/VM-guest\n", hdl->layer_no + 2);
-		} else if (!strncmp(string_buffer, "KVM/Linux", strlen("KVM/Linux"))) {
+		} else if (!strncmp(str_buf, "KVM/Linux", strlen("KVM/Linux"))) {
 			hosttype = QC_LAYER_TYPE_KVM_HYPERVISOR;
 			guesttype = QC_LAYER_TYPE_KVM_GUEST;
 			qc_debug(hdl, "Layer %2d: KVM-host\n", hdl->layer_no + 1);
 			qc_debug(hdl, "Layer %2d: KVM-guest\n", hdl->layer_no + 2);
 		} else {
 			qc_debug(hdl, "Error: Unsupported virtualization environment "
-					"encountered: '%s'\n", string_buffer);
-			rc = -2;
+					"encountered: '%s'\n", str_buf);
 			goto out;
 		}
-		if (qc_new_handle(hdl, &hosthdl, hdl->layer_no + 1, hosttype)) {
-			rc = -3;
+		if (!hdl->next)
+			rc = qc_append_handle(hdl, &hosthdl, hosttype);
+		else
+			rc = qc_insert_handle(hdl->next, &hosthdl, hosttype);
+		if (rc)
 			goto out;
-		}
-		hdl->next = hosthdl;
-		if (qc_new_handle(hosthdl, &guesthdl, hdl->layer_no + 2, guesttype)) {
-			rc = -4;
+		if (qc_append_handle(hosthdl, &guesthdl, guesttype))
 			goto out;
-		}
-		hosthdl->next = guesthdl;
-		if (qc_set_attr_string(hosthdl, qc_control_program_id, string_buffer, 16, ATTR_SRC_SYSINFO)) {
-			rc = -5;
+		if (qc_set_attr_string(hosthdl, qc_control_program_id, str_buf, 16, ATTR_SRC_SYSINFO) ||
+		    qc_set_attr_string(guesthdl, qc_layer_name, layer_name, 8, ATTR_SRC_SYSINFO))
 			goto out;
-		}
-		hdl = guesthdl;
-		guesthdl = NULL;
-
-		if ((start = sysi = qc_copy_sysinfo(hdl, sysinfo)) == NULL) {
-			rc = -6;
-			goto out;
-		}
-		while ((line = strtok(start, qc_sysinfo_delim)) != NULL) {
-			start = NULL;
-			for (j = 2, c = '0' + i/10; j <= 3; ++j, c = '0' + i%10) {
-				buf_name[j] = buf_ext_name[j] = buf_uuid[j] = buf_cpu_tot[j] = c;
-				buf_cpu_conf[j] = buf_cpu_stby[j] = buf_cpu_resv[j] = buf_adj[j] = c;
+		for (sysi = NULL, *line = strtok_r(sysi, qc_sysinfo_delim, sptr); *line;
+		     *line = strtok_r(sysi, qc_sysinfo_delim, sptr)) {
+			if (strncmp(*line, vmxx, 4) != 0)
+				break;
+			*line += 5;
+			sysi = NULL;
+			QC_SYSINFO_PARSE_LINE_INT(hosthdl, "Adjustment: %i", qc_adjustment);
+			if (strncmp(*line, "CPUs ", 5) == 0) {
+				*line += 5;
+				QC_SYSINFO_PARSE_LINE_INT(guesthdl, "Total: %i", qc_num_cpu_total);
+				QC_SYSINFO_PARSE_LINE_INT(guesthdl, "Configured: %i", qc_num_cpu_configured);
+				QC_SYSINFO_PARSE_LINE_INT(guesthdl, "Standby: %i", qc_num_cpu_standby);
+				QC_SYSINFO_PARSE_LINE_INT(guesthdl, "Reserved: %i", qc_num_cpu_reserved);
 			}
-			/* scanf VM.. Name: %s -> strncpy into layer name */
-			QC_PARSE_SYSINFO_VM_LINE_STR(name, 8, qc_layer_name);
-			QC_PARSE_SYSINFO_VM_LINE_NUM(hosthdl, adj, qc_adjustment);
-			QC_PARSE_SYSINFO_VM_LINE_NUM(hdl, cpu_tot, qc_num_cpu_total);
-			QC_PARSE_SYSINFO_VM_LINE_NUM(hdl, cpu_conf, qc_num_cpu_configured);
-			QC_PARSE_SYSINFO_VM_LINE_NUM(hdl, cpu_stby, qc_num_cpu_standby);
-			QC_PARSE_SYSINFO_VM_LINE_NUM(hdl, cpu_resv, qc_num_cpu_reserved);
-			QC_PARSE_SYSINFO_VM_LINE_STR(ext_name, 256, qc_layer_extended_name);	// KVM only
-			QC_PARSE_SYSINFO_VM_LINE_STR(uuid, 36, qc_layer_uuid);			// KVM only
+			if (guesttype == QC_LAYER_TYPE_KVM_GUEST) {
+				QC_SYSINFO_PARSE_LINE_STR(guesthdl, "Extended Name: %256[^\n]", 256, qc_layer_extended_name);
+				QC_SYSINFO_PARSE_LINE_STR(guesthdl, "UUID: %36s", 36, qc_layer_uuid);
+			}
 		}
-		free(sysi);
 	}
+	rc = 0;
+
 out:
 	qc_debug_indent_dec();
 
 	return rc;
 }
 
-/* Note: The character arrays have been zeroed out, so we strncpy the
- * actual length, and the next byte is a zero in any case */
-#define QC_SYSINFO_PARSE_LINE_STR(str, strlen, id) \
-	if (sscanf(line, str, str_buf) > 0 && qc_set_attr_string(hdl, id, str_buf, strlen, ATTR_SRC_SYSINFO)) \
-		return -10;
-#define QC_SYSINFO_PARSE_LINE_INT(str, id) \
-	if (sscanf(line, str, &int_buf) > 0) { \
-		if (qc_set_attr_int(hdl, id, int_buf, ATTR_SRC_SYSINFO)) \
-			return -11; \
-		if ((line = strtok(start, qc_sysinfo_delim)) == NULL) \
-			break; \
-	}
-#define QC_SYSINFO_PARSE_LINE_FLOAT(str, id) \
-	if (sscanf(line, str, &float_buf) > 0) { \
-		if (qc_set_attr_float(hdl, id, float_buf, ATTR_SRC_SYSINFO)) \
-			return -12; \
-		if ((line = strtok(start, qc_sysinfo_delim)) == NULL) \
-			break; \
-	}
 static int qc_derive_part_char_num(struct qc_handle *hdl) {
 	const char *del = " ";
-	char *str, *p, src;
+	char *str, *p, *sptr;
 	int pchars = 0;
 
-	if (qc_is_attr_set_string(hdl, qc_partition_char, &src)) {
+	if (qc_is_attr_set_string(hdl, qc_partition_char)) {
 		str = qc_get_attr_value_string(hdl, qc_partition_char);
-		for (p = strtok(str, del); p; p = strtok(NULL, del)) {
+		for (p = strtok_r(str, del, &sptr); p; p = strtok_r(NULL, del, &sptr)) {
 			if (!strncmp(p, "Shared", strlen("Shared")))
 				pchars |= QC_PART_CHAR_SHARED;
 			else if (!strncmp(p, "Dedicated", strlen("Dedicated")))
@@ -360,10 +301,42 @@ static int qc_derive_part_char_num(struct qc_handle *hdl) {
 	return 0;
 }
 
-static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char *sysinfo) {
-	char *line = NULL, *start, *sysi = NULL;
-	char str_buf[STR_BUF_SIZE];	// large enough for all sscanf() calls by far
-	int int_buf, rc = 0;
+static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char **sptr, char **line) {
+	char *sysi = NULL, str_buf[STR_BUF_SIZE];	// large enough for all sscanf() calls by far
+	int int_buf, rc = -1;
+
+	qc_debug(hdl, "Retrieve /proc/sysinfo information for LPAR\n");
+	qc_debug_indent_inc();
+	for (; *line && strncmp(*line, "VM", 2); *line = strtok_r(sysi, qc_sysinfo_delim, sptr)) {
+		sysi = NULL;
+		if (strncmp(*line, "LPAR ", 5) != 0)
+			continue;
+		*line += 5;
+		QC_SYSINFO_PARSE_LINE_INT(hdl, "Number: %i", qc_partition_number);
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Characteristics: %25[^\n]s", 25, qc_partition_char);
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Name: %8s", 8, qc_layer_name);
+		QC_SYSINFO_PARSE_LINE_INT(hdl, "Adjustment: %i", qc_adjustment);
+		if (strncmp(*line, "CPUs ", 5) == 0) {
+			*line += 5;
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Total: %i", qc_num_cpu_total);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Configured: %i", qc_num_cpu_configured);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Standby: %i", qc_num_cpu_standby);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Reserved: %i", qc_num_cpu_reserved);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Dedicated: %i", qc_num_cpu_dedicated);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Shared: %i", qc_num_cpu_shared);
+		}
+	}
+	rc = qc_derive_part_char_num(hdl);
+
+out:
+	qc_debug_indent_dec();
+
+	return rc;
+}
+
+static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char **sptr, char **line) {
+	char *sysi = NULL, str_buf[STR_BUF_SIZE];	// large enough for all sscanf() calls by far
+	int int_buf, rc = -1;
 	float float_buf;
 
 	qc_debug(hdl, "Retrieve /proc/sysinfo information for CEC\n");
@@ -371,104 +344,74 @@ static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char *sysinfo) {
 	if (qc_set_attr_int(hdl, qc_layer_type_num, QC_LAYER_TYPE_CEC, ATTR_SRC_SYSINFO) ||
 	    qc_set_attr_int(hdl, qc_layer_category_num, QC_LAYER_CAT_HOST, ATTR_SRC_SYSINFO) ||
 	    qc_set_attr_string(hdl, qc_layer_type, "CEC", sizeof("CEC"), ATTR_SRC_SYSINFO) ||
-	    qc_set_attr_string(hdl, qc_layer_category, "HOST", sizeof("HOST"), ATTR_SRC_SYSINFO)) {
-		rc = -1;
+	    qc_set_attr_string(hdl, qc_layer_category, "HOST", sizeof("HOST"), ATTR_SRC_SYSINFO))
 		goto out;
+	for (; *line && strncmp(*line, "LPAR", 4); *line = strtok_r(sysi, qc_sysinfo_delim, sptr)) {
+		sysi = NULL;
+		if (strncmp(*line, "Adj", 3) == 0)
+			continue;	// Lots of "Adjustment" lines that we can skip
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Manufacturer: %16s", 16, qc_manufacturer);
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Type: %4s", 4, qc_type);
+		if (strncmp(*line, "Model: ", 7) == 0) {
+			*line += 7;
+			QC_SYSINFO_PARSE_LINE_STR_NOCONT(hdl, "%16s", 16, qc_model_capacity);
+			QC_SYSINFO_PARSE_LINE_STR_NOCONT(hdl, "%*s %16s", 16, qc_model);
+			continue;
+		}
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Sequence Code: %16s", 16, qc_sequence_code);
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Plant: %4s", 4, qc_plant);
+		if (strncmp(*line, "Capacity ", 9) == 0) {
+			*line += 9;
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Adj. Ind.: %i", qc_capacity_adjustment_indication);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Ch. Reason: %i", qc_capacity_change_reason);
+		}
+		if (strncmp(*line, "CPUs ", 5) == 0) {
+			*line += 5;
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Total: %i", qc_num_cpu_total);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Configured: %i", qc_num_cpu_configured);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Standby: %i", qc_num_cpu_standby);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Reserved: %i", qc_num_cpu_reserved);
+		}
+		QC_SYSINFO_PARSE_LINE_FLOAT(hdl, "Capability: %f", qc_capability);
+		QC_SYSINFO_PARSE_LINE_FLOAT(hdl, "Secondary Capability: %f", qc_secondary_capability);
 	}
-	if ((start = sysi = qc_copy_sysinfo(hdl, sysinfo)) == NULL) {
-		rc = -2;
-		goto out;
-	}
-	while ((line = strtok(start, qc_sysinfo_delim)) != NULL) {
-		start = NULL;
-		QC_SYSINFO_PARSE_LINE_STR("Manufacturer: %16s\n", 16, qc_manufacturer);
-		QC_SYSINFO_PARSE_LINE_STR("Type: %4s\n", 4, qc_type);
-		QC_SYSINFO_PARSE_LINE_STR("Model: %16s\n", 16, qc_model_capacity);
-		QC_SYSINFO_PARSE_LINE_STR("Model: %*s %16s\n", 16, qc_model);
-		QC_SYSINFO_PARSE_LINE_STR("Sequence Code: %16s\n", 16, qc_sequence_code);
-		QC_SYSINFO_PARSE_LINE_STR("Plant: %4s\n", 4, qc_plant);
-		QC_SYSINFO_PARSE_LINE_INT("Capacity Adj. Ind.: %i\n", qc_capacity_adjustment_indication);
-		QC_SYSINFO_PARSE_LINE_INT("Capacity Ch. Reason: %i\n", qc_capacity_change_reason);
-		QC_SYSINFO_PARSE_LINE_INT("CPUs Total: %i\n", qc_num_cpu_total);
-		QC_SYSINFO_PARSE_LINE_INT("CPUs Configured: %i\n", qc_num_cpu_configured);
-		QC_SYSINFO_PARSE_LINE_INT("CPUs Standby: %i\n", qc_num_cpu_standby);
-		QC_SYSINFO_PARSE_LINE_INT("CPUs Reserved: %i\n", qc_num_cpu_reserved);
-		QC_SYSINFO_PARSE_LINE_FLOAT("Capability: %f\n", qc_capability);
-		QC_SYSINFO_PARSE_LINE_FLOAT("Secondary Capability: %f\n", qc_secondary_capability);
-	}
+	rc = 0;
 
 out:
 	qc_debug_indent_dec();
-	free(sysi);
-
-	return rc;
-}
-
-static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char *sysinfo) {
-	char *line = NULL, *start, *sysi = NULL;
-	char str_buf[STR_BUF_SIZE];	// large enough for all sscanf() calls by far
-	int int_buf, rc = 0;
-
-	qc_debug(hdl, "Retrieve /proc/sysinfo information for LPAR\n");
-	qc_debug_indent_inc();
-
-	if ((start = sysi = qc_copy_sysinfo(hdl, sysinfo)) == NULL) {
-		rc = -1;
-		goto out;
-	}
-	while ((line = strtok(start, qc_sysinfo_delim)) != NULL) {
-		start = NULL;
-		QC_SYSINFO_PARSE_LINE_INT("LPAR Number: %i\n", qc_partition_number);
-		QC_SYSINFO_PARSE_LINE_STR("LPAR Characteristics: %25[^\n]s\n", 25, qc_partition_char);
-		QC_SYSINFO_PARSE_LINE_STR("LPAR Name: %8s\n", 8, qc_layer_name);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR Adjustment: %i\n", qc_adjustment);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR CPUs Total: %i\n", qc_num_cpu_total);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR CPUs Configured: %i\n", qc_num_cpu_configured);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR CPUs Standby: %i\n", qc_num_cpu_standby);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR CPUs Reserved: %i\n", qc_num_cpu_reserved);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR CPUs Dedicated: %i\n", qc_num_cpu_dedicated);
-		QC_SYSINFO_PARSE_LINE_INT("LPAR CPUs Shared: %i\n", qc_num_cpu_shared);
-	}
-	rc = qc_derive_part_char_num(hdl);
-
-out:
-	qc_debug_indent_dec();
-	free(sysi);
 
 	return rc;
 }
 
 static int qc_sysinfo_process(struct qc_handle *hdl, iconv_t *cd, char *sysinfo) {
 	struct qc_handle *lparhdl = hdl->next;
-	int vmlayers, rc = 0;
+	char *sysi = NULL, *start, *sptr, *line;
+	int rc = -1;
 
+	fflush(stdout);
 	qc_debug(hdl, "Process sysinfo\n");
 	qc_debug_indent_inc();
 	if (!sysinfo) {
 		qc_debug(hdl, "qc_sysinfo_fill_in() called with priv==0\n");
 		goto out;
 	}
-	if (qc_fill_in_sysinfo_values_cec(hdl, sysinfo)) {
-		rc = -1;
+	// create a global copy which is parsed in one go across the functions. Therefore, pass on
+	// the strtok() saveptr and the last line parsed
+	if ((start = sysi = qc_copy_sysinfo(hdl, sysinfo)) == NULL)
 		goto out;
-	}
-	if (qc_fill_in_sysinfo_values_lpar(lparhdl, sysinfo)) {
-		rc = -2;
+	line = strtok_r(sysi, qc_sysinfo_delim, &sptr);
+	if (qc_fill_in_sysinfo_values_cec(hdl, &sptr, &line))
 		goto out;
-	}
-	vmlayers = qc_get_sysinfo_highest_vm_layer(hdl, sysinfo);
-	if (vmlayers > 100 || vmlayers < 0) {
-		qc_debug(hdl, "Error: Invalid number of VM layers: %d\n", vmlayers);
-		rc = -3;
+	if (qc_fill_in_sysinfo_values_lpar(lparhdl, &sptr, &line))
 		goto out;
-	}
-	if (qc_fill_in_sysinfo_values_vm(lparhdl, vmlayers, sysinfo)) {
-		rc = -4;
+	if (line && qc_fill_in_sysinfo_values_vm(lparhdl, &sptr, &line))
 		goto out;
-	}
+	rc = 0;
 
 out:
+	free(sysi);
 	qc_debug_indent_dec();
+
 	return rc;
 }
 

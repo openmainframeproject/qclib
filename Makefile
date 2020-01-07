@@ -4,7 +4,8 @@
 #     major : Backwards compatible changes to the API
 #     minor : Additions leaving the API unmodified
 #     bugfix: Bugfixes only
-VERSION = 1.0.0
+VERM    = 1
+VERSION = $(VERM).1.0
 CFLAGS  = -g -Wall -O2
 CFILES  = query_capacity_data.c query_capacity.c query_capacity_sthyi.c query_capacity_sysinfo.c query_capacity_hypfs.c
 OBJECTS = $(patsubst %.c,%.o,$(CFILES))
@@ -12,9 +13,9 @@ OBJECTS = $(patsubst %.c,%.o,$(CFILES))
 
 ifneq ("${V}","1")
         MAKEFLAGS += --quiet
-	cmd=echo $1$2;
+	cmd = echo $1$2;
 else
-	cmd=;
+	cmd =
 endif
 CC	= $(call cmd,"  CC    ",$@)gcc
 LINK	= $(call cmd,"  LINK  ",$@)gcc
@@ -41,7 +42,7 @@ qc_test: qc_test.c libqc.a
 	$(CC) $(CFLAGS) -static $< -L. -lqc -o $@
 
 qc_test-sh: qc_test.c libqc.so.$(VERSION)
-	$(CC) $(CFLAGS) -L. -l:libqc.so.$(VERSION) $< -o $@
+	$(CC) $(CFLAGS) -L. $< -o $@ libqc.so.$(VERSION)
 
 test: qc_test
 	./$<
@@ -49,12 +50,34 @@ test: qc_test
 test-sh: qc_test-sh
 	LD_LIBRARY_PATH=. ./$<
 
+doc: html
 
-
-doc:
+html: $(CFILES) query_capacity.h query_capacity_int.h query_capacity_data.h hcpinfbk_qclib.h
 	@if [ "`which doxygen 2>/dev/null`" != "" ]; then \
 		$(DOC) config.doxygen 2>&1 | sed 's/^/    /'; \
 	else \
 		echo "Error: 'doxygen' not installed"; \
 	fi
 
+install: libqc.a libqc.so.$(VERSION)
+	echo "  INSTALL"
+	install -Dm 644 libqc.a $(DESTDIR)/usr/lib64/libqc.a
+	install -Dm 755 libqc.so.$(VERSION) $(DESTDIR)/usr/lib64/libqc.so.$(VERSION)
+	ln -sr $(DESTDIR)/usr/lib64/libqc.so.$(VERSION) $(DESTDIR)/usr/lib64/libqc.so.$(VERM)
+	ln -sr $(DESTDIR)/usr/lib64/libqc.so.$(VERSION) $(DESTDIR)/usr/lib64/libqc.so
+	install -Dm 644 query_capacity.h $(DESTDIR)/usr/include/query_capacity.h
+	install -Dm 644 README $(DESTDIR)/usr/share/doc/packages/qclib/README
+	install -Dm 644 LICENSE $(DESTDIR)/usr/share/doc/packages/qclib/LICENSE
+
+installdoc: doc
+	echo "  INSTALLDOC"
+	install -dm 755 $(DESTDIR)/usr/share/doc/packages/qclib/html
+	cp -r html/* $(DESTDIR)/usr/share/doc/packages/qclib/html
+	chmod 644 $(DESTDIR)/usr/share/doc/packages/qclib/html/search/*
+	chmod 644 $(DESTDIR)/usr/share/doc/packages/qclib/html/*
+	chmod 755 $(DESTDIR)/usr/share/doc/packages/qclib/html/search
+
+clean:
+	echo "  CLEAN"
+	rm -f $(OBJECTS) libqc.a libqc.so.$(VERSION) qc_test qc_test-sh hcpinfbk_qclib.h
+	rm -rf html

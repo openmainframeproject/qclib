@@ -1,15 +1,15 @@
 /* Copyright IBM Corp. 2013, 2015 */
 
 #define _GNU_SOURCE
-#include <linux/types.h>
-#include <sys/types.h>
+#define _BSD_SOURCE
+
 #include <sys/stat.h>
+#include <linux/types.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include <dirent.h>
 #include <mntent.h>
-
+#include <endian.h>
 
 #include "query_capacity_int.h"
 #include "query_capacity_data.h"
@@ -67,21 +67,6 @@ struct dfs_cpu_info {
 	__u8      reserved4[2];
 	__u64     online_time;
 	__u8      reserved5[56];
-} __attribute__ ((packed));
-
-struct dfs_phys_hdr {
-	__u8      reserved1[1];
-	__u8      cpus;
-	__u8      reserved2[94];
-} __attribute__ ((packed));
-
-struct dfs_phys_cpu {
-	__u16     cpu_addr;
-	__u8      reserved1[2];
-	__u8      ctidx;
-	__u8      reserved2[3];
-	__u64     mgm_time;
-	__u8      reserved3[80];
 } __attribute__ ((packed));
 
 struct dfs_diag2fc {
@@ -315,9 +300,9 @@ out:
 // Returns the sys hdr from the LPAR matching the name of the respective layer 1 attribute in hdl,
 // and sets hdl to point to the LPAR layer.
 static struct dfs_sys_hdr *qc_get_lpar_sys_hdr(struct qc_handle **hdl, iconv_t *cd, __u8 *data) {
-	char lpar_name[QC_NAME_LEN + 1];
+	struct dfs_sys_hdr *sys_hdr = NULL;
 	struct dfs_info_blk_hdr *time_hdr;
-	struct dfs_sys_hdr *sys_hdr;
+	char lpar_name[QC_NAME_LEN + 1];
 	const char *s;
 	int i;
 
@@ -475,7 +460,7 @@ static int qc_read_diag_file(struct qc_handle *hdl, const char *dbgfs, struct hy
 			goto out_fail;
 		}
 		hdr = (struct dfs_diag_hdr*)priv->data;
-		if ((buflen = sizeof(struct dfs_diag_hdr) + hdr->len) == lrc) {
+		if ((buflen = sizeof(struct dfs_diag_hdr) + htobe64(hdr->len)) == lrc) {
 			priv->len = lrc;
 			break;
 		}
@@ -610,8 +595,8 @@ static int qc_get_zvm_diag_data(struct qc_handle **hdl, iconv_t *cd, struct dfs_
 
 	if ((*hdl = qc_get_zvm_hdl(*hdl, &s)) == NULL)
 		return -1;
-	qc_debug(*hdl, "Found data for %llu z/VM guest(s)\n", hdr->count);
-	for (i = 0, *data = (struct dfs_diag2fc*)(hdr + 1); i < hdr->count; ++i, ++*data) {
+	qc_debug(*hdl, "Found data for %llu z/VM guest(s)\n", htobe64(hdr->count));
+	for (i = 0, *data = (struct dfs_diag2fc*)(hdr + 1); i < htobe64(hdr->count); ++i, ++*data) {
 		memset(&name, 0, QC_NAME_LEN + 1);
 		memcpy(name, (*data)->guest_name, QC_NAME_LEN);
 		if (qc_ebcdic_to_ascii(*hdl, cd, name, QC_NAME_LEN) != 0)
@@ -635,9 +620,9 @@ static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, iconv_t *cd, s
 		goto out;
 
 	// update capping information
-	capped = (data->flags & 0x00000006) >> 1;
-	dedicated = (data->flags & 0x00000008) >> 3;
-	qc_debug(hdl, "Raw data: %d cpus, dedicated=%u, capped=%u\n", data->vcpus, dedicated, capped);
+	capped = (htobe32(data->flags) & 0x00000006) >> 1;
+	dedicated = (htobe32(data->flags) & 0x00000008) >> 3;
+	qc_debug(hdl, "Raw data: %u cpus, dedicated=%u, capped=%u\n", htobe32(data->vcpus), dedicated, capped);
 	switch (capped) {
 	case 1: cap_num = QC_CAPPING_SOFT;
 		cap = "soft";
@@ -661,7 +646,7 @@ static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, iconv_t *cd, s
 		 * least one dedicated CPU. That means, we can only
 		 * derive information, if no CPU is dedicated (i.e.
 		 * all shared) */
-		if (qc_set_attr_int(hdl, qc_num_cpu_shared, data->vcpus, ATTR_SRC_HYPFS) ||
+		if (qc_set_attr_int(hdl, qc_num_cpu_shared, htobe32(data->vcpus), ATTR_SRC_HYPFS) ||
 		    qc_set_attr_int(hdl, qc_num_cpu_dedicated, 0, ATTR_SRC_HYPFS)) {
 			rc = -4;
 			goto out;

@@ -58,7 +58,7 @@ Use the following 'make' targets:
 API Documentation
 =================
 All documentation is available in file query_capacity.h.
-If you have doxygen 1.8.0 (or higher) installed you will find the
+If you have doxygen 1.8.6 (or higher) installed, you will find the
 documentation in subdirectory html, after using 'make doc'.
 
 
@@ -69,8 +69,7 @@ See enclosed file LICENSE for details.
 
 Bug Reports
 ===========
-
-Send bug reports to linux390@de.ibm.com.
+See section 'Code Contributions'.
 
 
 Code Contributions
@@ -88,6 +87,22 @@ For enhancements, please describe the proposed change and its benefits.
 
 Release History:
 ================
+
+1.1.0
+    Changes:
+    - Makefile: Added targets 'clean' and 'install'
+    - qc_test: Support command line options
+    - Performance improvements
+    - Consistency checks: Turned into a run-time option. Disabled per
+      default, enabled in qc_test
+
+    Bug fixes:
+    - Makefile: Fixed breakages, including when run in verbose mode
+    - Fixed handling of hostnames with <8 characters in presence of hypfs
+    - If no SSI cluster was present, attribute qc_cluster_name was set
+      to an empty string instead of being left undefined
+    - Consistency checks: Fixed wrong positive
+    - Fixed source indicators in log
 
 1.0.0
     Changes:
