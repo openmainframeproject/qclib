@@ -5,9 +5,10 @@
 #     minor : Additions leaving the API unmodified
 #     bugfix: Bugfixes only
 VERM    = 1
-VERSION = $(VERM).1.0
+VERSION = $(VERM).2.0
 CFLAGS  = -g -Wall -O2
-CFILES  = query_capacity_data.c query_capacity.c query_capacity_sthyi.c query_capacity_sysinfo.c query_capacity_hypfs.c
+CFILES  = query_capacity.c query_capacity_data.c query_capacity_sysinfo.c query_capacity_ocf.c \
+          query_capacity_hypfs.c query_capacity_sthyi.c
 OBJECTS = $(patsubst %.c,%.o,$(CFILES))
 .SUFFIXES: .o .c
 

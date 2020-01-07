@@ -1,7 +1,7 @@
-/* Copyright IBM Corp. 2013, 2015 */
+/* Copyright IBM Corp. 2013, 2016 */
 
 #define _GNU_SOURCE
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <sys/stat.h>
 #include <linux/types.h>
@@ -19,9 +19,11 @@
 #define QC_HYPFS_ZVM		"/s390_hypfs/diag_2fc"
 #define QC_NAME_LEN		8
 #define QC_CPU_TYPE_CP		0
-#define QC_CPU_TYPE_AP		2
 #define QC_CPU_TYPE_IFL		3
-#define QC_CPU_TYPE_IIP		5
+
+#define QC_FLAG_PHYS		0x80
+#define QC_CPU_DEDICATED	0xffff
+#define QC_CPU_CONFIGURED	0x20
 
 #define HYPFS_NA		0
 #define HYPFS_AVAIL_ASCII_LPAR	1
@@ -41,7 +43,8 @@ struct dfs_diag_hdr {
 struct dfs_info_blk_hdr {
 	__u8      npar;
 	__u8      flags;
-	__u8      reserved1[6];
+	__u8      reserved1[4];
+	__u16     thispart;
 	__u64     curtod1;
 	__u64     curtod2;
 	__u8      reserved[40];
@@ -53,20 +56,27 @@ struct dfs_sys_hdr {
 	__u8      rcpus;
 	__u8      reserved2[5];
 	char      sys_name[8];
-	__u8      reserved3[80];
+	__u8      reserved3[48];
+	char      grp_name[8];
+	__u8      reserved4[24];
 } __attribute__ ((packed));
 
+// Note: We do with a single struct for CPU info only, though formally each section type
+//       has its own struct defined. However, all relevant parts match across all sections.
 struct dfs_cpu_info {
 	__u16     cpu_addr;
-	__u8      reserved1[2];
+	__u16     reserved1;
 	__u8      ctidx;
-	__u8      reserved2[3];
+	__u8      cflag;
+	__u16	  weight;
 	__u64     acc_time;
 	__u64     lp_time;
-	__u8      reserved3[6];
-	__u8      reserved4[2];
+	__u64     reserved3;
 	__u64     online_time;
-	__u8      reserved5[56];
+	__u32     reserved4[4];
+	__u32     cpuTypeCap;
+	__u32     groupCpuTypeCap;
+	__u32     reserved5[8];
 } __attribute__ ((packed));
 
 struct dfs_diag2fc {
@@ -238,14 +248,14 @@ out:
 
 // path must be hypfs path ending with '.../cpus'
 static int qc_get_hypfs_cpu_types(struct qc_handle *hdl, const char *path,
-				  int *cpu_total, int *ifl_total, int *cp_total) {
+				  int *ifl_total, int *cp_total) {
 	char str_buf[STR_BUF_SIZE];
 	struct dirent **namelist;
 	int n, no_files, un_total = 0, rc = 0;
 	FILE *file;
 	char *tmp;
 
-	*cpu_total = *ifl_total = *cp_total = 0;
+	*ifl_total = *cp_total = 0;
 	no_files = scandir(path, &namelist, NULL, alphasort);
 	for (n = 0; n < no_files; n++) {
 		if (*namelist[n]->d_name == '.')
@@ -265,28 +275,17 @@ static int qc_get_hypfs_cpu_types(struct qc_handle *hdl, const char *path,
 		free(tmp);
 		memset(str_buf, 0, STR_BUF_SIZE);
 		if (fread(str_buf, 1, STR_BUF_SIZE, file) > 0) {
-			if (!strncmp("CP", str_buf, strlen("CP"))) {
+			if (!strncmp("CP", str_buf, strlen("CP")))
 				(*cp_total)++;
-				(*cpu_total)++;
-			} else if (!strncmp("IFL", str_buf, strlen("IFL"))) {
+			else if (!strncmp("IFL", str_buf, strlen("IFL")))
 				(*ifl_total)++;
-				(*cpu_total)++;
-			} else if (!strncmp("IIP", str_buf, strlen("IIP"))
-				|| !strncmp("AP", str_buf, strlen("AP"))) {
+			else
 				un_total++;
-				(*cpu_total)++;
-			} else {
-				qc_debug(hdl, "Error: CPU of unknown type '%s' "
-						"encountered, discarding results\n", str_buf);
-				fclose(file);
-				rc = -2;
-				goto out;
-			}
 		}
 		fclose(file);
 	}
-	qc_debug(hdl, "Found %d cpus total (%d CP, %d IFL, %d UN)\n", *cpu_total,
-								*cp_total, *ifl_total, un_total);
+	qc_debug(hdl, "Found %d cpus total (%d CP, %d IFL, %d UN)\n", *cp_total + *ifl_total + un_total,
+									*cp_total, *ifl_total, un_total);
 
 out:
 	for (n = 0; n < no_files; n++)
@@ -297,68 +296,32 @@ out:
 	return rc;
 }
 
-// Returns the sys hdr from the LPAR matching the name of the respective layer 1 attribute in hdl,
-// and sets hdl to point to the LPAR layer.
-static struct dfs_sys_hdr *qc_get_lpar_sys_hdr(struct qc_handle **hdl, iconv_t *cd, __u8 *data) {
-	struct dfs_sys_hdr *sys_hdr = NULL;
-	struct dfs_info_blk_hdr *time_hdr;
-	char lpar_name[QC_NAME_LEN + 1];
-	const char *s;
-	int i;
-
-	*hdl = (*hdl)->next;	// points to LPAR layer now
-	if ((s = qc_get_attr_value_string(*hdl, qc_layer_name)) == NULL)
-		return NULL;
-	time_hdr = (struct dfs_info_blk_hdr *)(data + sizeof(struct dfs_diag_hdr));
-	data = (__u8 *)(time_hdr + 1);
-	qc_debug(*hdl, "Found %d LPARs\n", time_hdr->npar);
-	for (i = 0; i < time_hdr->npar; ++i) {
-		sys_hdr = (struct dfs_sys_hdr*)data;
-		memset(lpar_name, 0, QC_NAME_LEN + 1);
-		memcpy(&lpar_name, sys_hdr->sys_name, QC_NAME_LEN);
-		if (qc_ebcdic_to_ascii(*hdl, cd, lpar_name, QC_NAME_LEN) != 0)
-			return NULL;
-		if (strcmp(s, lpar_name) == 0)
-			break;
-		data += (sizeof(struct dfs_sys_hdr) + (sys_hdr->rcpus * sizeof(struct dfs_cpu_info)));
-	}
-	if (i == time_hdr->npar) {
-		qc_debug(*hdl, "Error: LPAR '%s' not found in sys hdrs\n", s);
-		sys_hdr = NULL;
-	}
-
-	return sys_hdr;
-}
-
-
 static int qc_fill_in_hypfs_lpar_values(struct qc_handle *hdl, const char *hypfs) {
-	int num_cpu = 0, num_ifl = 0, num_cp = 0;
+	int num_ifl = 0, num_cp = 0;
 	char *fpath = NULL;
 	const char *s;
-	int rc = 0;
+	int rc = -1;
 
 	qc_debug(hdl, "Add LPAR values from textual hypfs API\n");
 	qc_debug_indent_inc();
-	hdl = hdl->next;	// points to LPAR layer now
+	hdl = qc_get_lpar_handle(hdl);
 	if ((s = qc_get_attr_value_string(hdl, qc_layer_name)) == NULL) {
 		rc = -1;
 		goto out;
 	}
 	if (asprintf(&fpath, "%s/systems/%s/cpus", hypfs, s) == -1) {
 		qc_debug(hdl, "Error: Couldn't allocate buffer for hypfs systems path\n");
-		rc = -4;
 		goto out;
 	}
-	rc = qc_get_hypfs_cpu_types(hdl, fpath, &num_cpu, &num_ifl, &num_cp);
+	rc = qc_get_hypfs_cpu_types(hdl, fpath, &num_ifl, &num_cp);
 	free(fpath);
-	if (rc) {
-		rc = -5;
+	if (rc)
 		goto out;
-	}
 
 	if (qc_set_attr_int(hdl, qc_num_cp_total, num_cp, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_total, num_ifl, ATTR_SRC_HYPFS))
-		rc = -6;
+		goto out;
+	rc = 0;
 
 out:
 	qc_debug_indent_dec();
@@ -366,46 +329,181 @@ out:
 	return rc;
 }
 
-static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, iconv_t *cd, __u8 *data) {
-	int num_cpu = 0, num_ifl = 0, num_cp = 0, num_un = 0, i, rc = 0;
-	struct dfs_sys_hdr *sys_hdr;
+static int qc_fill_in_hypfs_cec_values(struct qc_handle *hdl, const char *hypfs) {
+	int num_ifl = 0, num_cp = 0;
+	char *fpath = NULL;
+	int rc = -1;
+
+	qc_debug(hdl, "Add CEC values from textual hypfs API\n");
+	qc_debug_indent_inc();
+	if (asprintf(&fpath, "%s/cpus", hypfs) == -1) {
+		qc_debug(hdl, "Error: Couldn't allocate buffer for hypfs systems path\n");
+		goto out;
+	}
+	rc = qc_get_hypfs_cpu_types(hdl, fpath, &num_ifl, &num_cp);
+	free(fpath);
+	if (rc)
+		goto out;
+
+	if (qc_set_attr_int(hdl, qc_num_cp_total, num_cp, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_total, num_ifl, ATTR_SRC_HYPFS))
+		goto out;
+	rc = 0;
+
+out:
+	qc_debug_indent_dec();
+
+	return rc;
+}
+
+static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
+	int ifl = 0, cp = 0, ifl_ded = 0, cp_ded = 0, ifl_cap = 0, cp_cap = 0, ifl_weight = 0,
+	    cp_weight = 0, ifl_abs_cap = 0, cp_abs_cap = 0, cp_all_weight = 0, ifl_all_weight = 0,
+	    cp_w, ifl_w, un = 0, *ifl_sh, *cp_sh, i, j, rc = -1, gpd_available;
+	struct dfs_info_blk_hdr *time_hdr;
+	struct dfs_sys_hdr *sys_hdr, *tgt_lpar;
 	struct dfs_cpu_info *cpu;
+	struct qc_handle *group;
+	__u64 *p;
 
 	qc_debug(hdl, "Add LPAR values from binary hypfs API\n");
 	qc_debug_indent_inc();
-	if ((sys_hdr = qc_get_lpar_sys_hdr(&hdl, cd, data)) == NULL) {
-		rc = -1;
+	time_hdr = (struct dfs_info_blk_hdr *)(data + sizeof(struct dfs_diag_hdr));
+	sys_hdr = (struct dfs_sys_hdr *)(time_hdr + 1);
+	tgt_lpar = (void *)(struct dfs_info_blk_hdr *)(data + sizeof(struct dfs_diag_hdr)) + htobe16(time_hdr->thispart);
+	gpd_available = time_hdr->flags & QC_FLAG_PHYS;
+	qc_debug(hdl, "Found data for %d LPAR(s), GPD data is %savailable\n", time_hdr->npar, gpd_available ? "" : "NOT ");
+	for (i = 0; i < time_hdr->npar; ++i) {
+		cpu = (struct dfs_cpu_info*)(sys_hdr + 1);
+		cp_w = ifl_w = 0;
+		for (j = 0; j < sys_hdr->rcpus; ++j, ++cpu) {
+			if (!(cpu->cflag & QC_CPU_CONFIGURED))
+				continue;
+			switch (cpu->ctidx) {
+			case QC_CPU_TYPE_CP:
+				if (sys_hdr == tgt_lpar) {
+					cp++;
+					cp_cap = htobe32(cpu->groupCpuTypeCap);
+					cp_abs_cap = htobe32(cpu->cpuTypeCap);
+					if (cpu->weight == QC_CPU_DEDICATED)
+						cp_ded++;
+					else
+						cp_weight = htobe16(cpu->weight);
+				}
+				if (cpu->weight != QC_CPU_DEDICATED)
+					cp_w = htobe16(cpu->weight);
+				break;
+			case QC_CPU_TYPE_IFL:
+				if (sys_hdr == tgt_lpar) {
+					ifl++;
+					ifl_cap = htobe32(cpu->groupCpuTypeCap);
+					ifl_abs_cap = htobe32(cpu->cpuTypeCap);
+					if (cpu->weight == QC_CPU_DEDICATED)
+						ifl_ded++;
+					else
+						ifl_weight = htobe16(cpu->weight);
+				}
+				if (cpu->weight != QC_CPU_DEDICATED)
+					ifl_w = htobe16(cpu->weight);
+				break;
+			default:
+				if (sys_hdr == tgt_lpar)
+					un++;
+				break;
+			}
+		}
+		cp_all_weight += cp_w;
+		ifl_all_weight += ifl_w;
+		sys_hdr = (struct dfs_sys_hdr *)cpu;
+	}
+	qc_debug(hdl, "Found %d cpus total (%d CP, %d IFL, %d UN)\n", cp + ifl + un, cp, ifl, un);
+	hdl = qc_get_lpar_handle(hdl);
+	if (qc_set_attr_int(hdl, qc_num_cp_total, cp, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_cp_dedicated, cp_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_cp_shared, cp - cp_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_total, ifl, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_shared, ifl - ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_cp_absolute_capping, cp_abs_cap * 0x10000 / 100, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_ifl_absolute_capping, ifl_abs_cap * 0x10000 / 100, ATTR_SRC_HYPFS))
+		goto out_err;
+	if (gpd_available) {
+		cp_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_cp_shared);
+		ifl_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_ifl_shared);
+		if (cp_sh && ifl_sh &&
+		    (qc_set_attr_int(hdl, qc_cp_weight_capping, cp_weight ? *cp_sh * 0x10000 * cp_weight / cp_all_weight : 0, ATTR_SRC_HYPFS) ||
+		     qc_set_attr_int(hdl, qc_ifl_weight_capping, ifl_weight ? *ifl_sh * 0x10000 * ifl_weight / ifl_all_weight : 0, ATTR_SRC_HYPFS)))
+			goto out_err;
+	}
+	if (*(p = (__u64 *)tgt_lpar->grp_name) != 0) {
+		/* LPAR group is only defined in case group name is not binary zero */
+		qc_debug(hdl, "Insert LPAR group layer\n");
+		if (qc_insert_handle(hdl, &group, QC_LAYER_TYPE_LPAR_GROUP)) {
+			qc_debug(hdl, "Error: Failed to insert LPAR group layer\n");
+			goto out_err;
+		}
+		rc = qc_set_attr_ebcdic_string(group, qc_layer_name, (unsigned char *)tgt_lpar->grp_name, sizeof(tgt_lpar->grp_name), ATTR_SRC_STHYI);
+		if (cp_cap)
+			rc |= qc_set_attr_int(group, qc_cp_absolute_capping, cp_cap * 0x10000 / 100, ATTR_SRC_STHYI);
+		if (ifl_cap)
+			rc |= qc_set_attr_int(group, qc_ifl_absolute_capping, ifl_cap * 0x10000 / 100, ATTR_SRC_STHYI);
+	}
+	rc = 0;
+
+out_err:
+	qc_debug_indent_dec();
+
+	return rc;
+}
+
+static int qc_fill_in_hypfs_cec_values_bin(struct qc_handle *hdl, __u8 *data) {
+	int num_ifl = 0, num_ifl_ded = 0, num_cp = 0, num_cp_ded = 0, num_un = 0, i, rc = 0;
+	struct dfs_sys_hdr *sys_hdr = NULL;
+	struct dfs_info_blk_hdr *time_hdr;
+	struct dfs_cpu_info *cpu;
+
+	qc_debug(hdl, "Add CEC values from binary hypfs API\n");
+	qc_debug_indent_inc();
+	time_hdr = (struct dfs_info_blk_hdr *)(data + sizeof(struct dfs_diag_hdr));
+	if (!(time_hdr->flags & QC_FLAG_PHYS)) {
+		qc_debug(hdl, "GPD data is NOT available\n");
 		goto out;
 	}
 
+	data = (__u8 *)(time_hdr + 1);
+	for (i = 0; i < time_hdr->npar; ++i) {
+		sys_hdr = (struct dfs_sys_hdr*)data;
+		data += (sizeof(struct dfs_sys_hdr) + (sys_hdr->rcpus * sizeof(struct dfs_cpu_info)));
+	}
+	sys_hdr = (struct dfs_sys_hdr*)data;
 	cpu = (struct dfs_cpu_info*)(sys_hdr + 1);
-	for (i = 0; i < sys_hdr->rcpus; ++i, ++cpu) {
+	for (i = 0; i < sys_hdr->cpus; ++i, ++cpu) {
 		switch (cpu->ctidx) {
 		case QC_CPU_TYPE_CP:
 			num_cp++;
-			num_cpu++;
+			if (cpu->weight == QC_CPU_DEDICATED)
+				num_cp_ded++;
 			break;
 		case QC_CPU_TYPE_IFL:
 			num_ifl++;
-			num_cpu++;
-			break;
-		case QC_CPU_TYPE_AP:
-		case QC_CPU_TYPE_IIP:
-			num_un++;
-			num_cpu++;
+			if (cpu->weight == QC_CPU_DEDICATED)
+				num_ifl_ded++;
 			break;
 		default:
-			qc_debug(hdl, "Error: Unknown CPU type '%d' in cpu %d in phys hdr "
-						"encountered, discarding results\n", cpu->ctidx, i);
-			rc = -2;
-			goto out;
+			num_un++;
+			break;
 		}
 	}
-	qc_debug(hdl, "Found %d cpus total (%d CP, %d IFL, %d UN)\n", num_cpu, num_cp, num_ifl,
-								      num_un);
+	qc_debug(hdl, "CPs=%d, dedicated CPs=%d, IFLs=%d, dedicated IFLs=%d, unknown=%d\n", num_cp, num_cp_ded, num_ifl, num_ifl_ded, num_un);
 	if (qc_set_attr_int(hdl, qc_num_cp_total, num_cp, ATTR_SRC_HYPFS) ||
-	    qc_set_attr_int(hdl, qc_num_ifl_total, num_ifl, ATTR_SRC_HYPFS))
-		rc = -3;
+	    qc_set_attr_int(hdl, qc_num_cp_dedicated, num_cp_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_cp_shared, num_cp - num_cp_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_total, num_ifl, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, num_ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ifl_shared, num_ifl - num_ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_cpu_dedicated, num_cp_ded + num_ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_cpu_shared, num_ifl + num_cp - num_cp_ded - num_ifl_ded, ATTR_SRC_HYPFS))
+		rc = -1;
 
 out:
 	qc_debug_indent_dec();
@@ -510,7 +608,7 @@ static struct qc_handle *qc_get_zvm_hdl(struct qc_handle *hdl, const char **s) {
 }
 
 static int qc_fill_in_hypfs_zvm_values(struct qc_handle *hdl, const char *hypfs) {
-	int fplen, cpu_count, cap_num, rc = 0;
+	int fplen, cpu_count = 0, cap_num, rc = 0;
 	char str_buf[STR_BUF_SIZE], *fpath = NULL, *cap = NULL;
 	int dedicated = -1; /* can be 0 or 1, if set; remains -1, if not set */
 	const char *s;
@@ -560,10 +658,8 @@ static int qc_fill_in_hypfs_zvm_values(struct qc_handle *hdl, const char *hypfs)
 	}
 
 	strcpy(fpath + fplen, "count");
-	if (qc_read_file(hdl, fpath, str_buf, STR_BUF_SIZE)) {
-		if (sscanf(str_buf, "%i", &cpu_count) <= 0)
-			cpu_count = 0;
-	}
+	if (qc_read_file(hdl, fpath, str_buf, STR_BUF_SIZE) && sscanf(str_buf, "%i", &cpu_count) <= 0)
+		cpu_count = 0;
 
 	qc_debug(hdl, "Raw data: %d cpus, dedicated=%u, capped=%s\n", cpu_count, dedicated, cap);
 	if (cpu_count) {
@@ -588,7 +684,7 @@ out:
 
 // Returns diag data for highest layer z/VM instance in var 'data', with pointer to entire data
 // stored in 'buf' (must be free()'d), and updates hdl to point to respective handle.
-static int qc_get_zvm_diag_data(struct qc_handle **hdl, iconv_t *cd, struct dfs_diag_hdr *hdr, struct dfs_diag2fc **data) {
+static int qc_get_zvm_diag_data(struct qc_handle **hdl, struct dfs_diag_hdr *hdr, struct dfs_diag2fc **data) {
 	char name[QC_NAME_LEN + 1];
 	const char *s;
 	int i;
@@ -599,7 +695,7 @@ static int qc_get_zvm_diag_data(struct qc_handle **hdl, iconv_t *cd, struct dfs_
 	for (i = 0, *data = (struct dfs_diag2fc*)(hdr + 1); i < htobe64(hdr->count); ++i, ++*data) {
 		memset(&name, 0, QC_NAME_LEN + 1);
 		memcpy(name, (*data)->guest_name, QC_NAME_LEN);
-		if (qc_ebcdic_to_ascii(*hdl, cd, name, QC_NAME_LEN) != 0)
+		if (qc_ebcdic_to_ascii(*hdl, name, QC_NAME_LEN) != 0)
 			return -2;
 		if (strcmp(name, s) == 0)
 			return 0;
@@ -608,7 +704,7 @@ static int qc_get_zvm_diag_data(struct qc_handle **hdl, iconv_t *cd, struct dfs_
 	return -3;
 }
 
-static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, iconv_t *cd, struct hypfs_priv *priv) {
+static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, struct hypfs_priv *priv) {
 	unsigned int dedicated, capped;
 	struct dfs_diag2fc *data;
 	int rc = 0, cap_num;
@@ -616,7 +712,7 @@ static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, iconv_t *cd, s
 
 	qc_debug(hdl, "Add z/VM values from binary hypfs API\n");
 	qc_debug_indent_inc();
-	if ((rc = qc_get_zvm_diag_data(&hdl, cd, (struct dfs_diag_hdr *)priv->data, &data)) != 0)
+	if ((rc = qc_get_zvm_diag_data(&hdl, (struct dfs_diag_hdr *)priv->data, &data)) != 0)
 		goto out;
 
 	// update capping information
@@ -819,7 +915,7 @@ static int qc_hypfs_open(struct qc_handle *hdl, char **buf) {
 		}
 	} else
 		rc = 0;
-	// Note: The ASCII hypfs has to be parsed on the fly in qc_hypfs_fill_in()
+	// Note: The ASCII hypfs has to be parsed on the fly in qc_hypfs_process()
 
 out:
 	qc_debug_indent_dec();
@@ -838,7 +934,7 @@ static void qc_hypfs_close(struct qc_handle *hdl, char *buf) {
 	}
 }
 
-static int qc_hypfs_process(struct qc_handle *hdl, iconv_t *cd, char *buf) {
+static int qc_hypfs_process(struct qc_handle *hdl, char *buf) {
 	struct hypfs_priv *priv = (struct hypfs_priv *)buf;
 	char str_buf[STR_BUF_SIZE] = "";
 	time_t mtime, mtime_old;
@@ -849,15 +945,18 @@ static int qc_hypfs_process(struct qc_handle *hdl, iconv_t *cd, char *buf) {
 	qc_debug(hdl, "Process hypfs\n");
 	qc_debug_indent_inc();
 	if (!priv) {
-		qc_debug(hdl, "qc_hypfs_fill_in() called with priv==NULL, exiting\n");
+		qc_debug(hdl, "qc_hypfs_process() called with priv==NULL, exiting\n");
 		goto out;
 	}
 	if (priv->avail == HYPFS_AVAIL_BIN_LPAR) {
-		rc = qc_fill_in_hypfs_lpar_values_bin(hdl, cd, (__u8 *)priv->data);
-		goto out;
+		if (qc_fill_in_hypfs_cec_values_bin(hdl->root, (__u8 *)priv->data) ||
+		    qc_fill_in_hypfs_lpar_values_bin(hdl, (__u8 *)priv->data)) {
+			rc = -1;
+			goto out;
+		}
 	}
 	if (priv->avail == HYPFS_AVAIL_BIN_ZVM) {
-       		rc = qc_fill_in_hypfs_zvm_values_bin(hdl, cd, priv);
+       		rc = qc_fill_in_hypfs_zvm_values_bin(hdl, priv);
 		goto out;
 	}
 
@@ -901,7 +1000,8 @@ static int qc_hypfs_process(struct qc_handle *hdl, iconv_t *cd, char *buf) {
 		}
 
 		if (!strncmp(str_buf, "LPAR Hypervisor", strlen("LPAR Hypervisor"))) {
-			if (qc_fill_in_hypfs_lpar_values(hdl, priv->hypfs)) {
+			if (qc_fill_in_hypfs_cec_values(hdl->root, priv->hypfs) ||
+			    qc_fill_in_hypfs_lpar_values(hdl, priv->hypfs)) {
 				rc = -6;
 				goto out;
 			}

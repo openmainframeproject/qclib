@@ -15,9 +15,8 @@
 /* Functions to set and get attributes */
 int qc_set_attr_int(struct qc_handle *hdl, enum qc_attr_id id, int val, char src);
 int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char src);
-int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, char *val, unsigned int val_len, char src);
-int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigned char *val, unsigned int val_len,
-												iconv_t *cd, char src);
+int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *val, unsigned int val_len, char src);
+int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigned char *val, unsigned int val_len, char src);
 int qc_is_attr_set_int(struct qc_handle *hdl, enum qc_attr_id id);
 int qc_is_attr_set_float(struct qc_handle *hdl, enum qc_attr_id id);
 int qc_is_attr_set_string(struct qc_handle *hdl, enum qc_attr_id id);

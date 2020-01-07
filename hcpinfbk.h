@@ -1,10 +1,10 @@
-/* Copyright IBM Corp. 2013, 2014 */
+/* Copyright IBM Corp. 2013, 2015 */
 
 #pragma pack(packed)
 #pragma anonstruct(on)
 struct inf0par {
-  unsigned char  /*  XL1 */ infpflg1;      /* Partition Flag Byte 1 reserved for */
-                                           /* IBM use. */
+  unsigned char  /*  XL1 */ infpflg1;      /* Partition Flag Byte 1             @VRKP30K */
+  #define INFPMTEN 128                     /* Multithreading (MT) is enabled    @VRKP30K */
   unsigned char  /*  XL1 */ infpflg2;      /* Partition Flag Byte 2 reserved for */
                                            /* IBM use. */
   unsigned char  /*  XL1 */ infpval1;      /* Partition Validity Byte 1 */
@@ -26,19 +26,24 @@ struct inf0par {
                                            /* STSI and information reported in */
                                            /* the following fields is valid: */
                                            /* INFPPNUM, INFPPNAM */
+  #define INFPLGVL 8                       /* LPAR Group Absolute Capacity */
+                                           /* Capping information validity */
+                                           /* This bit being on indicates */
+                                           /* that INFPLGNM, INFPLGCP and */
+  /* INFPLGIF are valid.               @VRKQXDN */
   unsigned char  /*  XL1 */ infpval2;      /* Partition Validity Byte 2 reserved */
                                            /* for IBM use. */
   short int      /*  HL2 */ infppnum;      /* Logical Partition Number. This is */
                                            /* the Logical-Partition Number */
                                            /* reported by STSI 2.2.2. */
-  short int      /*  HL2 */ infpscps;      /* Count of shared logical CPs */
+  short int      /*  HL2 */ infpscps;      /* Count of shared logical CP cores  @VRKP30K */
                                            /* configured for this partition. */
-  short int      /*  HL2 */ infpdcps;      /* Count of dedicated logical CPs */
+  short int      /*  HL2 */ infpdcps;      /* Count of dedicated logical CP cores */
+  /* configured for this partition.    @VRKP30K */
+  short int      /*  HL2 */ infpsifl;      /* Count of shared logical IFL cores @VRKP30K */
                                            /* configured for this partition. */
-  short int      /*  HL2 */ infpsifl;      /* Count of shared logical IFLs */
-                                           /* configured for this partition. */
-  short int      /*  HL2 */ infpdifl;      /* Count of dedicated logical IFLs */
-                                           /* configured for this partition. */
+  short int      /*  HL2 */ infpdifl;      /* Count of dedicated logical IFL cores */
+  /* configured for this partition.    @VRKP30K */
   char           __filler0[2];
   unsigned char  /*  CL8 */ infppnam[8];   /* Logical Partition Name, in EBCDIC */
                                            /* format. This is the Logical- */
@@ -54,26 +59,51 @@ struct inf0par {
   int            /*  FL4 */ infpabcp;      /* Partition absolute capped */
                                            /* capacity for CPs, a scaled */
                                            /* number where X'00010000' */
-                                           /* represents one CPU. */
+                                           /* represents one core.              @VRKP30K */
                                            /* Zero if not capped. */
                                            /* Cap is applicable only to shared */
   /* processors.                       @U7206P4 */
   int            /*  FL4 */ infpwbif;      /* Partition weight-based capped */
                                            /* capacity for IFLs, a scaled */
                                            /* number where X'00010000' */
-                                           /* represents one CPU. */
+                                           /* represents one core.              @VRKP30K */
                                            /* Zero if not capped. */
                                            /* Cap is applicable only to shared */
   /* processors.                       @U7206P4 */
   int            /*  FL4 */ infpabif;      /* Partition absolute capped */
                                            /* capacity for IFLs, a scaled */
                                            /* number where X'00010000' */
-                                           /* represents one CPU. */
+                                           /* represents one core.              @VRKP30K */
                                            /* Zero if not capped. */
                                            /* Cap is applicable only to shared */
   /* processors.                       @U7206P4 */
-  #define INF0PSIZ 40                      /* Size of Partition Section in bytes */
-  #define INF0PSZD 5                       /* Size of Partition Section in DWs */
+  unsigned char  /*  CL8 */ infplgnm[8];   /* LPAR Group Name. Binary zeros when */
+                                           /* the partition is not in a group. */
+                                           /* EBCDIC and padded with blanks on */
+                                           /* the right when in a group. The */
+                                           /* group name may be reported even */
+                                           /* if there is no group cap on CP or */
+  /* IFL CPU types.                    @VRKQXDN */
+  int            /*  FL4 */ infplgcp;      /* LPAR Group Absolute Capacity */
+                                           /* Value for the CP CPU type */
+                                           /* when nonzero. This field will be */
+                                           /* nonzero only when INFPLGNM is */
+                                           /* nonzero and a cap is defined for */
+                                           /* the LPAR Group for CP CPU */
+                                           /* type.  When nonzero, contains a */
+                                           /* scaled number where X'00010000' */
+  /* represents one core.              @VRKQXDN */
+  int            /*  FL4 */ infplgif;      /* LPAR Group Absolute Capacity */
+                                           /* Value for the IFL CPU type */
+                                           /* when nonzero. This field will be */
+                                           /* nonzero only when INFPLGNM is */
+                                           /* nonzero and a cap is defined for */
+                                           /* the LPAR Group for IFL CPU */
+                                           /* type.  When nonzero, contains a */
+                                           /* scaled number where X'00010000' */
+  /* represents one core.              @VRKQXDN */
+  #define INF0PSIZ 56                      /* Size of Partition Section in bytes */
+  #define INF0PSZD 7                       /* Size of Partition Section in DWs */
 };
 struct inf0mac {
   unsigned char  /*  XL1 */ infmflg1;      /* Machine Flag Byte 1 reserved */
@@ -144,6 +174,9 @@ struct inf0hyp {
   unsigned char  /*  XL1 */ infyflg1;      /* Hypervisor Flag Byte 1            @U7105P4 */
   #define INFYLMCN 128                     /* Guest CPU usage hard limiting is  @U7105P4 */
   /* using the consumption method.     @U7105P4 */
+  #define INFYLMPR 64                      /* If on, Limithard caps use */
+                                           /* prorated core time for capping. */
+  /* If off, raw CPU time is used.     @D0400HY */
   unsigned char  /*  XL1 */ infyflg2;      /* Hypervisor Flag Byte 2 */
                                            /* Reserved for IBM use */
   unsigned char  /*  XL1 */ infyval1;      /* Hypervisor Validity Byte 1 */
@@ -152,7 +185,21 @@ struct inf0hyp {
                                            /* Reserved for IBM use */
   unsigned char  /*  XL1 */ infytype;      /* Hypervisor type */
   #define INFYTVM 1                        /* z/VM is the hypervisor */
-  char           __filler0[3];
+  char           __filler0[1];
+  unsigned char  /*  XL1 */ infycpt;       /* Threads in use per CP core.       @VRKP30K */
+  /* This value is reported for the    @VRKP30K */
+  /* current configuration settings    @VRKP30K */
+  /* even when the guest CPUs are not  @VRKP30K */
+  /* dispatched on CPs. The value is   @U8802DN */
+  /* only set when SMT enabled as      @U8802DN */
+  /* indicated by INFPFLG1.INFPMTEN.   @U8802DN */
+  unsigned char  /*  XL1 */ infyiflt;      /* Threads in use per IFL core.      @VRKP30K */
+  /* This value is reported for the    @VRKP30K */
+  /* current configuration settings    @VRKP30K */
+  /* even when the guest CPUs are not  @VRKP30K */
+  /* dispatched on IFLs. The value is  @U8802DN */
+  /* only set when SMT enabled as      @U8802DN */
+  /* indicated by INFPFLG1.INFPMTEN.   @U8802DN */
   unsigned char  /*  CL8 */ infysyid[8];   /* System Identifier, in EBCDIC */
                                            /* format, left justified and padded */
                                            /* with blanks. This is the value */
@@ -166,14 +213,14 @@ struct inf0hyp {
                                            /* SSI statement in the system */
                                            /* configuration file. Blank if */
                                            /* non-existent. */
-  short int      /*  HL2 */ infyscps;      /* Number of CPs shared among guests */
-                                           /* of this hypervisor. */
-  short int      /*  HL2 */ infydcps;      /* Number of CPs dedicated to guests */
-                                           /* of this hypervisor. */
-  short int      /*  HL2 */ infysifl;      /* Number of IFLs shared among guests */
-                                           /* of this hypervisor. */
-  short int      /*  HL2 */ infydifl;      /* Number of IFLs dedicated to guests */
-                                           /* of this hypervisor. */
+  short int      /*  HL2 */ infyscps;      /* Number of CP cores shared by      @VRKP30K */
+                                           /* guests of this hypervisor.        @VRKP30K */
+  short int      /*  HL2 */ infydcps;      /* Number of CP cores dedicated      @VRKP30K */
+                                           /* to guest CPUs of this hypervisor. @VRKP30K */
+  short int      /*  HL2 */ infysifl;      /* Number of IFL cores shared by     @VRKP30K */
+                                           /* guests of this hypervisor.        @VRKP30K */
+  short int      /*  HL2 */ infydifl;      /* Number of IFL cores dedicated     @VRKP30K */
+                                           /* to guest CPUs of this hypervisor. @VRKP30K */
   #define INF0YSIZ 32                      /* Size of Hypervisor Section in bytes */
   #define INF0YSZD 4                       /* Size of Hypervisor Section in DWs */
 };
@@ -281,12 +328,14 @@ struct inf0hdr {
 };
 struct inf0gst {
   unsigned char  /*  XL1 */ infgflg1;      /* Guest Flag Byte 1 */
-  #define INFGMOB 128                      /* Guest is mobility eligible */
+  #define INFGMOB 128                      /* Guest mobility is enabled.        @U7405P4 */
   #define INFGMCPT 64                      /* Guest has multiple CPU types */
   #define INFGCPLH 32                      /* Guest CP dispatch type has */
                                            /* LIMITHARD cap. */
   #define INFGIFLH 16                      /* Guest IFL dispatch type has */
                                            /* LIMITHARD cap. */
+  #define INFGVCPT 8                       /* Virtual CPs are thread dispatched @VRKP30K */
+  #define INFGVIFT 4                       /* Virtual IFLs are thread dispatched@VRKP30K */
   unsigned char  /*  XL1 */ infgflg2;      /* Guest Flag Byte 2 */
                                            /* Reserved for IBM use */
   unsigned char  /*  XL1 */ infgval1;      /* Guest Validity Byte 1 */
@@ -297,12 +346,14 @@ struct inf0gst {
   short int      /*  HL2 */ infgscps;      /* Number of guest shared CPs */
   short int      /*  HL2 */ infgdcps;      /* Number of guest dedicated CPs */
   unsigned char  /*  XL1 */ infgcpdt;      /* Dispatch type for guest CPs */
+                                           /* This field is valid if INFGSCPS   @VRKP30K */
+                                           /* or INFGDCPS is greater than zero. @VRKP30K */
                                            /* 00 General Purpose (CP) */
   char           __filler0[3];
   int            /*  FL4 */ infgcpcc;      /* Guest current capped capacity for */
                                            /* shared virtual CPs, a scaled */
                                            /* number where X'00010000' */
-                                           /* represents one CPU. */
+                                           /* represents one core.              @VRKP30K */
                                            /* Zero if not capped. */
   short int      /*  HL2 */ infgsifl;      /* Number of guest shared IFLs */
   short int      /*  HL2 */ infgdifl;      /* Number of guest dedicated IFLs */
@@ -315,7 +366,7 @@ struct inf0gst {
   int            /*  FL4 */ infgifcc;      /* Guest current capped capacity for */
                                            /* shared virtual IFLs, a scaled */
                                            /* number where X'00010000' */
-                                           /* represents one CPU. */
+                                           /* represents one core.              @VRKP30K */
                                            /* Zero if not capped. */
   unsigned char  /*  XL1 */ infgpflg;      /* CPU Pool Capping Flags */
   #define INFGPCLH 128                     /* CPU Pool's CP virtual type has */
@@ -326,16 +377,17 @@ struct inf0gst {
   /* LIMITHARD cap.                    @U7068P4 */
   #define INFGPIFC 16                      /* CPU Pool's IFL virtual type has */
   /* CAPACITY cap.                     @U7068P4 */
+  #define INFPRCTM 8                       /* CPU Pool uses prorated core time. @U7874HY */
   char           __filler2[3];
   unsigned char  /*  CL8 */ infgpnam[8];   /* CPU pool name. Blanks if not in a */
                                            /* CPU Pool. */
   int            /*  FL4 */ infgpccc;      /* CPU pool capped capacity for shared */
                                            /* virtual CPs, a scaled number where */
-                                           /* X'00010000' represents one CPU. */
+                                           /* X'00010000' represents one core.  @VRKP30K */
                                            /* Zero if not capped. */
   int            /*  FL4 */ infgpicc;      /* CPU pool capped capacity for shared */
                                            /* virtual IFLs, a scaled number where */
-                                           /* X'00010000' represents one CPU. */
+                                           /* X'00010000' represents one core.  @VRKP30K */
                                            /* Zero if not capped. */
   #define INF0GSIZ 56                      /* Size of Guest Section in bytes */
   #define INF0GSZD 7                       /* Size of Guest Section in DWs */
@@ -349,4 +401,3 @@ struct infbk {
 };
 #pragma anonstruct(pop)
 #pragma pack(reset)
-

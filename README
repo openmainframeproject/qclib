@@ -88,6 +88,29 @@ For enhancements, please describe the proposed change and its benefits.
 Release History:
 ================
 
+1.2.0
+    Changes:
+    - Removed source [S] for attributes qc_num_cpu_dedicated and
+      qc_num_cpu_shared in LPAR layer for consistency
+    - Retrieve qc_layer_name in CEC layer from OCF
+    - Extended hypfs usage to provide more CP, IFL and CPU counts for
+      CEC and LPAR layers, as well as capping information for LPAR group
+      and LPAR layers
+    - Added attributes for IFLs, CPs and CPUs for KVM hypervisor and guest
+      layers
+    - Added support for LPAR Groups
+    - Added new attribute qc_prorated_core_time
+    - Fill qc_num_cp_total and qc_num_ifl_total in LPAR layer from STHYI
+    - Consistency checks: Detect inconsistent values across data sources
+    - Documentation improvements
+
+    Bug fixes:
+    - Fixed crash when setting QC_USE_DUMP to an invalid directory and
+      QC_DEBUG=1
+    - Fixed reset of debug level when QC_CHECK_CONSISTENCY is invalid
+    - Display all values in attribute qc_partition_char in case of multiple
+    - Set qc_cp_dispatch_type in presence of CPs only
+
 1.1.0
     Changes:
     - Makefile: Added targets 'clean' and 'install'
@@ -164,4 +187,4 @@ Release History:
 
 
 
-Copyright IBM Corp. 2013, 2015
+Copyright IBM Corp. 2013, 2016

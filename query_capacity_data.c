@@ -1,17 +1,15 @@
-/* IBM Corp. 2013, 2015 */
+/* IBM Corp. 2013, 2016 */
 
 //_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
-
 #include <unistd.h>
 #include <sys/stat.h>
-
 #include "query_capacity_data.h"
 
 
 /*
- * Below are the structures that define the attributes. The attribute is
- * reference as an enum, see documentation in query_capacity.h.
+ * Below are the structures that define the attributes. The attributes are
+ * referenced as an enum, see documentation in query_capacity.h.
  *
  * Note that strings (char pointers) carry the trailing zero byte.
  */
@@ -49,6 +47,22 @@ struct qc_cec_values {
 	int capacity_change_reason;
 };
 
+/*
+ * valid attributes for a layer, where "layer-type"=="LPAR-Group"
+ */
+struct qc_lpar_group_values {
+	int layer_type_num;
+	int layer_category_num;
+	char layer_type[QC_LAYER_TYPE_LEN];
+	char layer_category[QC_LAYER_CAT_LEN];
+	char layer_name[9];
+	int cp_absolute_capping;
+	int ifl_absolute_capping;
+};
+
+/*
+ * valid attributes for a layer, where "layer-type"=="LPAR"
+ */
 struct qc_lpar_values {
 	int layer_type_num;
 	int layer_category_num;
@@ -101,6 +115,7 @@ struct qc_zvm_hypervisor_values {
 	char control_program_id[17];
 	int adjustment;
 	int hardlimit_consumption;
+	int prorated_core_time;
 	int num_cpu_total;
 	int num_cpu_dedicated;
 	int num_cpu_shared;
@@ -139,28 +154,11 @@ struct qc_zvm_guest_values {
 	int mobility_eligible;
 	int has_multiple_cpu_types;
 	int cp_dispatch_limithard;
-	int ifl_dispatch_limithard;
 	int cp_dispatch_type;
-	int ifl_dispatch_type;
 	int cp_capped_capacity;
+	int ifl_dispatch_limithard;
+	int ifl_dispatch_type;
 	int ifl_capped_capacity;
-	char pool_name[9];
-	int pool_cp_limithard_cap;
-	int pool_cp_capacity_cap;
-	int pool_ifl_limithard_cap;
-	int pool_ifl_capacity_cap;
-	int pool_cp_capped_capacity;
-	int pool_ifl_capped_capacity;
-	int hardlimit_consumption;
-	int hyp_cpu_total;
-	int hyp_cpu_dedicated;
-	int hyp_cpu_shared;
-	int hyp_cp_total;
-	int hyp_cp_dedicated;
-	int hyp_cp_shared;
-	int hyp_ifl_total;
-	int hyp_ifl_dedicated;
-	int hyp_ifl_shared;
 };
 
 struct qc_kvm_hypervisor_values {
@@ -170,6 +168,15 @@ struct qc_kvm_hypervisor_values {
 	char layer_category[QC_LAYER_CAT_LEN];
 	char control_program_id[17];
 	int adjustment;
+	int num_cpu_total;
+	int num_cpu_dedicated;
+	int num_cpu_shared;
+	int num_cp_total;
+	int num_cp_dedicated;
+	int num_cp_shared;
+	int num_ifl_total;
+	int num_ifl_dedicated;
+	int num_ifl_shared;
 };
 
 struct qc_kvm_guest_values {
@@ -184,6 +191,12 @@ struct qc_kvm_guest_values {
 	int num_cpu_configured;
 	int num_cpu_standby;
 	int num_cpu_reserved;
+	int num_cpu_dedicated;
+	int num_cpu_shared;
+	int num_ifl_total;
+	int num_ifl_dedicated;
+	int num_ifl_shared;
+	int ifl_dispatch_type;
 };
 
 enum qc_data_type {
@@ -229,6 +242,17 @@ static struct qc_attr cec_attrs[]  =  {
 	{-1, string, -1}
 };
 
+static struct qc_attr lpar_group_attrs[] = {
+	{qc_layer_type_num, integer, offsetof(struct qc_lpar_group_values, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_lpar_group_values, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_lpar_group_values, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_lpar_group_values, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_lpar_group_values, layer_name)},
+	{qc_cp_absolute_capping, integer, offsetof(struct qc_lpar_group_values, cp_absolute_capping)},
+	{qc_ifl_absolute_capping, integer, offsetof(struct qc_lpar_group_values, ifl_absolute_capping)},
+	{-1, string, -1}
+};
+
 static struct qc_attr lpar_attrs[] = {
 	{qc_layer_type_num, integer, offsetof(struct qc_lpar_values, layer_type_num)},
 	{qc_layer_category_num, integer, offsetof(struct qc_lpar_values, layer_category_num)},
@@ -268,6 +292,7 @@ static struct qc_attr zvm_hv_attrs[] = {
 	{qc_control_program_id, string, offsetof(struct qc_zvm_hypervisor_values, control_program_id)},
 	{qc_adjustment, integer, offsetof(struct qc_zvm_hypervisor_values, adjustment)},
 	{qc_hardlimit_consumption, integer, offsetof(struct qc_zvm_hypervisor_values, hardlimit_consumption)},
+	{qc_prorated_core_time, integer, offsetof(struct qc_zvm_hypervisor_values, prorated_core_time)},
 	{qc_num_cpu_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_cpu_total)},
 	{qc_num_cpu_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_cpu_dedicated)},
 	{qc_num_cpu_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_cpu_shared)},
@@ -287,6 +312,15 @@ static struct qc_attr kvm_hv_attrs[] = {
 	{qc_layer_category, string, offsetof(struct qc_kvm_hypervisor_values, layer_category)},
 	{qc_control_program_id, string, offsetof(struct qc_kvm_hypervisor_values, control_program_id)},
 	{qc_adjustment, integer, offsetof(struct qc_kvm_hypervisor_values, adjustment)},
+	{qc_num_cpu_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_cpu_total)},
+	{qc_num_cpu_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_cpu_dedicated)},
+	{qc_num_cpu_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_cpu_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_ifl_shared)},
 	{-1, string, -1}
 };
 
@@ -348,6 +382,12 @@ static struct qc_attr kvm_guest_attrs[] = {
 	{qc_num_cpu_configured, integer, offsetof(struct qc_kvm_guest_values, num_cpu_configured)},
 	{qc_num_cpu_standby, integer, offsetof(struct qc_kvm_guest_values, num_cpu_standby)},
 	{qc_num_cpu_reserved, integer, offsetof(struct qc_kvm_guest_values, num_cpu_reserved)},
+	{qc_num_cpu_dedicated, integer, offsetof(struct qc_kvm_guest_values, num_cpu_dedicated)},
+	{qc_num_cpu_shared, integer, offsetof(struct qc_kvm_guest_values, num_cpu_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_kvm_guest_values, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_kvm_guest_values, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_kvm_guest_values, num_ifl_shared)},
+	{qc_ifl_dispatch_type, integer, offsetof(struct qc_kvm_guest_values, ifl_dispatch_type)},
 	{-1, string, -1}
 };
 
@@ -394,6 +434,7 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_cluster_name: return "cluster_name";
 	case qc_control_program_id: return "control_program_id";
 	case qc_hardlimit_consumption: return "hardlimit_consumption";
+	case qc_prorated_core_time: return "prorated_core_time";
 	case qc_cp_limithard_cap: return "pool_cp_limithard_cap";
 	case qc_cp_capacity_cap: return "pool_cp_capacity_cap";
 	case qc_ifl_limithard_cap: return "pool_ifl_limithard_cap";
@@ -430,6 +471,13 @@ int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no
 		layer_category_num = QC_LAYER_CAT_HOST;
 		layer_category = "HOST";
 		layer_type = "CEC";
+		break;
+	case QC_LAYER_TYPE_LPAR_GROUP:
+		layer_sz = sizeof(struct qc_lpar_values);
+		attrs = lpar_group_attrs;
+		layer_category_num = QC_LAYER_CAT_POOL;
+		layer_category = "POOL";
+		layer_type = "LPAR-GROUP";
 		break;
 	case QC_LAYER_TYPE_LPAR:
 		layer_sz = sizeof(struct qc_lpar_values);
@@ -555,28 +603,35 @@ int qc_append_handle(struct qc_handle *hdl, struct qc_handle **appended_hdl, int
 	return 0;
 }
 
-static char *qc_set_attr(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type, char src) {
+// Indicates the attribute as 'set', returning a ptr to its content
+static char *qc_set_attr(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type, char src, int *prev_set) {
 	struct qc_attr *attr_list = hdl->attr_list;
 	int count;
 
 	for (count = 0; attr_list[count].offset >= 0; ++count) {
 		if (attr_list[count].id == id && attr_list[count].type == type) {
+			*prev_set = hdl->attr_present[count];
 			hdl->attr_present[count] = 1;
 			hdl->src[count] = src;
 			return (char *)hdl->layer + attr_list[count].offset;
 		}
 	}
-	qc_debug(hdl, "Error: Failed to set attr=%s\n", qc_attr_id_to_char(hdl, id));
+	qc_debug(hdl, "Error: Failed to set attr=%s (not found)\n", qc_attr_id_to_char(hdl, id));
 
 	return NULL;
 }
 
 // Sets attribute 'id' in layer as pointed to by 'hdl'
 int qc_set_attr_int(struct qc_handle *hdl, enum qc_attr_id id, int val, char src) {
-	int *ptr;
+	int *ptr, prev_set;
 
-	if ((ptr = (int *)qc_set_attr(hdl, id, integer, src)) == NULL)
+	if ((ptr = (int *)qc_set_attr(hdl, id, integer, src, &prev_set)) == NULL)
 		return -1;
+	if (qc_consistency_check_requested && prev_set && *ptr != val) {
+		qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %d from %c, try to set to %d from %c\n",
+			hdl->layer_no, qc_attr_id_to_char(hdl, id), *ptr, qc_get_attr_value_src_int(hdl, id), val, src);
+		return -2;
+	}
 	*ptr = val;
 
 	return 0;
@@ -584,26 +639,49 @@ int qc_set_attr_int(struct qc_handle *hdl, enum qc_attr_id id, int val, char src
 
 // Sets attribute 'id' in layer as pointed to by 'hdl'
 int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char src) {
+	int prev_set;
 	float *ptr;
 
-	if ((ptr = (float *)qc_set_attr(hdl, id, floatingpoint, src)) == NULL)
+	if ((ptr = (float *)qc_set_attr(hdl, id, floatingpoint, src, &prev_set)) == NULL)
 		return -1;
+	if (qc_consistency_check_requested && prev_set && *ptr != val) {
+		qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %f from %c, try to set to %f from %c\n",
+			 hdl->layer_no, qc_attr_id_to_char(hdl, id), *ptr, qc_get_attr_value_src_int(hdl, id), val, src);
+		return -2;
+	}
 	*ptr = val;
 
 	return 0;
 }
 
-// Sets string attribute 'id' in layer as pointed to by 'hdl', stripping trailing blanks
-int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, char *str, unsigned int str_len, char src) {
-	char *ptr, *p;
+// Sets string attribute 'id' in layer as pointed to by 'hdl', stripping trailing blanks, but
+// leaving the original string unmodified
+int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *str, unsigned int str_len, char src) {
+	char *ptr, *tmp, *s;
+	int prev_set;
 
-	if ((ptr = qc_set_attr(hdl, id, string, src)) == NULL)
+	if ((ptr = qc_set_attr(hdl, id, string, src, &prev_set)) == NULL)
 		return -1;
+	if (qc_consistency_check_requested && prev_set) {
+		if ((tmp = strdup(str)) == NULL) {
+			qc_debug(hdl, "Error: Failed to duplicate string\n");
+			return -2;
+		}
+		for (s = &tmp[strlen(tmp) - 1]; (*s == ' ' || *s == '\n') && s != tmp; --s)
+			*s = '\0';
+		if (strcmp(ptr, tmp)) {
+			qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %s from %c, try to set to %s from %c\n",
+				hdl->layer_no, qc_attr_id_to_char(hdl, id), ptr, qc_get_attr_value_src_int(hdl, id), tmp, src);
+			free(tmp);
+			return -3;
+		}
+		free(tmp);
+	}
 	ptr[str_len] = '\0';
 	strncpy(ptr, str, str_len);
 	// strip trailing blanks
-	for (p = &ptr[str_len - 1]; *p == ' ' && p !=  ptr; --p)
-		*p = '\0';
+	for (s = &ptr[strlen(ptr) - 1]; (*s == ' ' || *s == '\n') && s != ptr; --s)
+		*s = '\0';
 
 	return 0;
 }
@@ -611,7 +689,7 @@ int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, char *str, uns
 // Sets ebcdic string attribute 'id' in layer as pointed to by 'hdl'
 // Note: Copy content to temporary buffer for conversion first, as we do not want to modify the source data.
 int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigned char *str,
-			      unsigned int str_len, iconv_t *cd, char src) {
+			      unsigned int str_len, char src) {
 	char *buf;
 	int rc;
 
@@ -622,7 +700,7 @@ int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigne
 	}
 	memset(buf, '\0', str_len + 1);
 	memcpy(buf, str, str_len);
-	if ((rc = qc_ebcdic_to_ascii(hdl, cd, buf, str_len)) == 0) {
+	if ((rc = qc_ebcdic_to_ascii(hdl, buf, str_len)) == 0) {
 		if (strlen(buf) && qc_set_attr_string(hdl, id, (char *)buf, str_len, src))
 			rc = -2;
 	}
@@ -633,7 +711,7 @@ int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigne
 
 // Certain parts assume that empty strings might also consist of spaces
 // Returns >0 if not empty, 0 if empty, and <0 for errors
-int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen, iconv_t *cd) {
+int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen) {
 	char str[9] = "";	// suffices for all users of this function
 
 	if (*buf == '\0')
@@ -643,7 +721,7 @@ int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsig
 		return -1;
 	}
 	memcpy(str, buf, buflen);
-	if (qc_ebcdic_to_ascii(hdl, cd, str, sizeof(str)))
+	if (qc_ebcdic_to_ascii(hdl, str, sizeof(str)))
 		return -2;
 
 	return *str != '\0';
@@ -676,7 +754,7 @@ int qc_is_attr_set_string(struct qc_handle *hdl, enum qc_attr_id id) {
 }
 
 struct qc_handle *qc_get_root_handle(struct qc_handle *hdl) {
-	return hdl ? hdl->root : hdl;
+	return hdl ? hdl->root : NULL;
 }
 
 struct qc_handle *qc_get_prev_handle(struct qc_handle *hdl) {
@@ -690,20 +768,26 @@ struct qc_handle *qc_get_prev_handle(struct qc_handle *hdl) {
 	return NULL;
 }
 
+static int qc_get_attr_idx(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type) {
+	struct qc_attr *attr_list = hdl->attr_list;
+	int idx;
+
+	for (idx = 0; attr_list[idx].offset >= 0; ++idx)
+		if (attr_list[idx].id == id && attr_list[idx].type == type)
+			return idx;
+
+	return -1;
+}
+
 /// Retrieve value of attribute 'id' of layer pointed at by 'hdl'
 static void *qc_get_attr_value(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type) {
 	struct qc_attr *attr_list = hdl->attr_list;
-	int count;
+	int idx;
 
-	for (count = 0; attr_list[count].offset >= 0; ++count) {
-		if (attr_list[count].id == id && attr_list[count].type == type) {
-			if (!hdl->attr_present[count])
-				return NULL;
-			return (char *)hdl->layer + attr_list[count].offset;
-		}
-	}
+	if ((idx = qc_get_attr_idx(hdl, id, type)) < 0 || !hdl->attr_present[idx])
+		return NULL;
 
-	return NULL;
+	return (char *)hdl->layer + attr_list[idx].offset;
 }
 
 int *qc_get_attr_value_int(struct qc_handle *hdl, enum qc_attr_id id) {
@@ -719,14 +803,12 @@ char *qc_get_attr_value_string(struct qc_handle *hdl, enum qc_attr_id id) {
 }
 
 static char qc_get_attr_value_src(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type) {
-	struct qc_attr *attr_list = hdl->attr_list;
-	int count;
+	int idx;
 
-	for (count = 0; attr_list[count].offset >= 0; ++count)
-		if (attr_list[count].id == id && attr_list[count].type == type)
-			return hdl->src[count];
+	if ((idx = qc_get_attr_idx(hdl, id, type)) < 0)
+		return 'x';
 
-	return 'x';
+	return hdl->src[idx];
 }
 
 char qc_get_attr_value_src_int(struct qc_handle *hdl, enum qc_attr_id id) {

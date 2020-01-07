@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2015 */
+/* Copyright IBM Corp. 2013, 2016 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,8 +11,8 @@
 int err_cnt = 0;
 int attr_indent = 34;
 
-void print_break(int indent) {
-	printf("%*s\n", indent, "");
+void print_break() {
+	printf("\n");
 }
 
 void print_separator(int indent) {
@@ -67,6 +67,7 @@ const char *attr2char(enum qc_attr_id id) {
 	case qc_cluster_name: return "qc_cluster_name";
 	case qc_control_program_id: return "qc_control_program_id";
 	case qc_hardlimit_consumption: return "qc_hardlimit_consumption";
+	case qc_prorated_core_time: return "qc_prorated_core_time";
 	case qc_cp_limithard_cap: return "qc_cp_limithard_cap";
 	case qc_cp_capacity_cap: return "qc_cp_capacity_cap";
 	case qc_ifl_limithard_cap: return "qc_ifl_limithard_cap";
@@ -191,7 +192,7 @@ int sanity_checks(void *hdl, int layers) {
 		err_cnt++;
 		return 1;
 	}
-	if (strcmp("LPAR", s)) {
+	if (strncmp("LPAR", s, strlen("LPAR"))) {
 		printf("Oops. The second lowest layer is not LPAR. " \
 		       "Exiting.\n");
 		err_cnt++;
@@ -453,7 +454,7 @@ void print_cec_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_layer_category, "n/a", layer, indent);
 	print_int_attr(hdl, qc_layer_type_num, "n/a", layer, indent);
 	print_int_attr(hdl, qc_layer_category_num, "n/a", layer, indent);
-	print_string_attr(hdl, qc_layer_name, "  V", layer, indent);
+	print_string_attr(hdl, qc_layer_name, "O V", layer, indent);
 	print_string_attr(hdl, qc_manufacturer, "S V", layer, indent);
 	print_string_attr(hdl, qc_type, "S V", layer, indent);
 	print_string_attr(hdl, qc_model_capacity, "S  ", layer, indent);
@@ -461,34 +462,49 @@ void print_cec_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_sequence_code, "S V", layer, indent);
 	print_string_attr(hdl, qc_plant, "S V", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_cpu_total, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_configured, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_standby, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_reserved, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_dedicated, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_shared, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_shared, " hV", layer, indent);
 
-	print_break(indent);
-	print_int_attr(hdl, qc_num_cp_total, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cp_dedicated, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cp_shared, "  V", layer, indent);
+	print_break();
+	print_int_attr(hdl, qc_num_cp_total, " HV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_shared, " hV", layer, indent);
 
-	print_break(indent);
-	print_int_attr(hdl, qc_num_ifl_total, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_ifl_dedicated, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_ifl_shared, "  V", layer, indent);
+	print_break();
+	print_int_attr(hdl, qc_num_ifl_total, " HV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_shared, " hV", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_float_attr(hdl, qc_capability, "S  ", layer, indent);
 	print_float_attr(hdl, qc_secondary_capability, "S  ", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_capacity_adjustment_indication, "S  ", layer, indent);
 	print_int_attr(hdl, qc_capacity_change_reason, "S  ", layer, indent);
 
 	// check an attribute that only exists at a different layer
 	verify_nonexistence(hdl, qc_cp_absolute_capping, layer);
+}
+
+void print_lpar_group_information(void *hdl, int layer, int indent) {
+	print_header(indent, layer, "LPAR-Group");
+	indent += 2;
+	print_string_attr(hdl, qc_layer_type, "n/a", layer, indent);
+	print_string_attr(hdl, qc_layer_category, "n/a", layer, indent);
+	print_int_attr(hdl, qc_layer_type_num, "n/a", layer, indent);
+	print_int_attr(hdl, qc_layer_category_num, "n/a", layer, indent);
+	print_string_attr(hdl, qc_layer_name, " hV", layer, indent);
+	print_int_attr(hdl, qc_cp_absolute_capping, " hV", layer, indent);
+	print_int_attr(hdl, qc_ifl_absolute_capping, " hV", layer, indent);
+
+	// check an attribute that only exists at a different layer
+	verify_nonexistence(hdl, qc_secondary_capability, layer);
 }
 
 void print_lpar_information(void *hdl, int layer, int indent) {
@@ -504,29 +520,29 @@ void print_lpar_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_partition_char_num, "S  ", layer, indent);
 	print_int_attr(hdl, qc_adjustment, "S  ", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_cpu_total, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_configured, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_standby, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_reserved, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_dedicated, "S V", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_shared, "S V", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_dedicated, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_shared, "S  ", layer, indent);
 
-	print_break(indent);
-	print_int_attr(hdl, qc_num_cp_total, " H ", layer, indent);
-	print_int_attr(hdl, qc_num_cp_dedicated, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cp_shared, "  V", layer, indent);
+	print_break();
+	print_int_attr(hdl, qc_num_cp_total, " HV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_shared, " hV", layer, indent);
 
-	print_break(indent);
-	print_int_attr(hdl, qc_num_ifl_total, " H ", layer, indent);
-	print_int_attr(hdl, qc_num_ifl_dedicated, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_ifl_shared, "  V", layer, indent);
+	print_break();
+	print_int_attr(hdl, qc_num_ifl_total, " HV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_shared, " hV", layer, indent);
 
-	print_break(indent);
-	print_int_attr(hdl, qc_cp_absolute_capping, "  V", layer, indent);
-	print_int_attr(hdl, qc_cp_weight_capping, "  V", layer, indent);
-	print_int_attr(hdl, qc_ifl_absolute_capping, "  V", layer, indent);
-	print_int_attr(hdl, qc_ifl_weight_capping, "  V", layer, indent);
+	print_break();
+	print_int_attr(hdl, qc_cp_absolute_capping, " hV", layer, indent);
+	print_int_attr(hdl, qc_cp_weight_capping, " hV", layer, indent);
+	print_int_attr(hdl, qc_ifl_absolute_capping, " hV", layer, indent);
+	print_int_attr(hdl, qc_ifl_weight_capping, " hV", layer, indent);
 
 	// check an attribute that only exists at a different layer
 	verify_nonexistence(hdl, qc_secondary_capability, layer);
@@ -544,8 +560,9 @@ void print_zvmhyp_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_control_program_id, "S  ", layer, indent);
 	print_int_attr(hdl, qc_adjustment, "S  ", layer, indent);
 	print_int_attr(hdl, qc_hardlimit_consumption, "  V", layer, indent);
+	print_int_attr(hdl, qc_prorated_core_time, "  V", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_cpu_total, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_dedicated, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_shared, "  V", layer, indent);
@@ -569,7 +586,7 @@ void print_zvmpool_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_layer_category_num, "n/a", layer, indent);
 	print_string_attr(hdl, qc_layer_name, "  V", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_cp_limithard_cap, "  V", layer, indent);
 	print_int_attr(hdl, qc_cp_capacity_cap, "  V", layer, indent);
 	print_int_attr(hdl, qc_cp_capped_capacity, "  V", layer, indent);
@@ -592,7 +609,7 @@ void print_zvmguest_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_capping, " H ", layer, indent);
 	print_int_attr(hdl, qc_capping_num, " H ", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_cpu_total, "S V", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_configured, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_standby, "S  ", layer, indent);
@@ -600,17 +617,17 @@ void print_zvmguest_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_num_cpu_dedicated, " HV", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_shared, " HV", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_cp_total, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cp_dedicated, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cp_shared, "  V", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_ifl_total, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_ifl_dedicated, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_ifl_shared, "  V", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_mobility_eligible, "  V", layer, indent);
 	print_int_attr(hdl, qc_has_multiple_cpu_types, "  V", layer, indent);
 	print_int_attr(hdl, qc_cp_dispatch_type, "  V", layer, indent);
@@ -634,6 +651,17 @@ void print_kvmhyp_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_control_program_id, "S  ", layer, indent);
 	print_int_attr(hdl, qc_adjustment, "S  ", layer, indent);
 
+	print_break();
+	print_int_attr(hdl, qc_num_cpu_total, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_dedicated, "SHV", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_shared, "SHV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_total, " HV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_cp_shared, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_total, "SHV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_dedicated, "ShV", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_shared, "ShV", layer, indent);
+
 	// check an attribute that only exists at a different layer
 	verify_nonexistence(hdl, qc_cp_absolute_capping, layer);
 }
@@ -649,11 +677,17 @@ void print_kvmguest_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_layer_extended_name, "S  ", layer, indent);
 	print_string_attr(hdl, qc_layer_uuid, "S  ", layer, indent);
 
-	print_break(indent);
+	print_break();
 	print_int_attr(hdl, qc_num_cpu_total, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_configured, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_standby, "S  ", layer, indent);
 	print_int_attr(hdl, qc_num_cpu_reserved, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_dedicated, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_cpu_shared, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_total, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_dedicated, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_shared, "S  ", layer, indent);
+	print_int_attr(hdl, qc_ifl_dispatch_type, "SHV", layer, indent);
 
 	// check an attribute that only exists at a different layer
 	verify_nonexistence(hdl, qc_cp_absolute_capping, layer);
@@ -707,7 +741,7 @@ static void *run_test(int quiet, int fulltest) {
 		goto out;
 	print_separator(indent);
 	printf("We are running %i layer(s)\n", layers);
-	printf("\n");
+	print_break();
 	print_separator(indent);
 
 	if (sanity_checks(hdl, layers))
@@ -719,11 +753,15 @@ static void *run_test(int quiet, int fulltest) {
 		indent += 2;
 		if (qc_get_attribute_int(hdl, qc_layer_type_num, i, &etype) <= 0) {
 			printf("Error: Failed to retrieve 'qc_layer_type_num'\n");
+			err_cnt++;
 			goto out;
 		}
 		switch (etype) {
 		case QC_LAYER_TYPE_CEC:
 			print_cec_information(hdl, i, indent);
+			break;
+		case QC_LAYER_TYPE_LPAR_GROUP:
+			print_lpar_group_information(hdl, i, indent);
 			break;
 		case QC_LAYER_TYPE_LPAR:
 			print_lpar_information(hdl, i, indent);
@@ -770,7 +808,7 @@ out:
 			printf("Done, no errors detected\n");
 		else
 			printf("%d error(s) detected\n", err_cnt);
-		printf("\n");
+		print_break();
 	}
 
 	return hdl;
@@ -793,7 +831,7 @@ int main(int argc, char **argv) {
 	static struct option long_options[] = {
 		{ "help",  no_argument, NULL, 'h'},
 		{ "quiet", no_argument, NULL, 'q'},
-		{ 0,       0,           0,    0  }
+		{ 0,       0,		0,    0  }
 	};
 	int i, j, c, quiet = 0, rc = 0;
 	void **hdls = NULL;
@@ -816,7 +854,7 @@ int main(int argc, char **argv) {
 		// dump(s) specified on command line - dump all, and close handels later on
 		for (j = 0, i = optind; i < argc; ++i, ++j) {
 			setenv("QC_USE_DUMP", argv[i], 1);
-                        if ((hdls[j] = run_test(quiet, 0)) == NULL)
+			if ((hdls[j] = run_test(quiet, 0)) == NULL)
 				rc++;
 		}
 		for (--j; j >= 0; --j)

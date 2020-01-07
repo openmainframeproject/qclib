@@ -112,7 +112,7 @@ out:
 
 out_early:
 	free(fname);
-	qc_debug(hdl, "Done reading sysinfo, sysinfo=%p'\n", *sysinfo);
+	qc_debug(hdl, "Done reading sysinfo, sysinfo=%p\n", *sysinfo);
 	qc_debug_indent_dec();
 
 	return *sysinfo == NULL;
@@ -274,12 +274,19 @@ out:
 }
 
 static int qc_derive_part_char_num(struct qc_handle *hdl) {
+	char *str = NULL, *p, *sptr;
+	int pchars = 0, rc = 0;
 	const char *del = " ";
-	char *str, *p, *sptr;
-	int pchars = 0;
 
 	if (qc_is_attr_set_string(hdl, qc_partition_char)) {
-		str = qc_get_attr_value_string(hdl, qc_partition_char);
+		p = qc_get_attr_value_string(hdl, qc_partition_char);
+		if (!p)
+			goto out;
+		if ((str = strdup(p)) == NULL) {
+			rc = 12;
+			qc_debug(hdl, "Error: Failed to allocate memory in qc_derive_part_char_num: %s", strerror(errno));
+			goto out;
+		}
 		for (p = strtok_r(str, del, &sptr); p; p = strtok_r(NULL, del, &sptr)) {
 			if (!strncmp(p, "Shared", strlen("Shared")))
 				pchars |= QC_PART_CHAR_SHARED;
@@ -290,15 +297,21 @@ static int qc_derive_part_char_num(struct qc_handle *hdl) {
 			else {
 				qc_debug(hdl, "Error: Encountered unknown partition "
 					"characteristics '%s' in string '%s'\n", p, str);
-				return -12;
+				rc = 13;
+				goto out;
 			}
 		}
 		qc_debug(hdl, "Derived qc_partition_char_num from '%s' to be %d\n", str, pchars);
-		if (qc_set_attr_int(hdl, qc_partition_char_num, pchars, ATTR_SRC_SYSINFO))
-			return -13;
+		if (qc_set_attr_int(hdl, qc_partition_char_num, pchars, ATTR_SRC_SYSINFO)) {
+			rc = 14;
+			goto out;
+		}
 	}
 
-	return 0;
+out:
+	free(str);
+
+	return rc;
 }
 
 static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char **sptr, char **line) {
@@ -383,8 +396,8 @@ out:
 	return rc;
 }
 
-static int qc_sysinfo_process(struct qc_handle *hdl, iconv_t *cd, char *sysinfo) {
-	struct qc_handle *lparhdl = hdl->next;
+static int qc_sysinfo_process(struct qc_handle *hdl, char *sysinfo) {
+	struct qc_handle *lparhdl = qc_get_lpar_handle(hdl);
 	char *sysi = NULL, *start, *sptr, *line;
 	int rc = -1;
 
@@ -392,7 +405,7 @@ static int qc_sysinfo_process(struct qc_handle *hdl, iconv_t *cd, char *sysinfo)
 	qc_debug(hdl, "Process sysinfo\n");
 	qc_debug_indent_inc();
 	if (!sysinfo) {
-		qc_debug(hdl, "qc_sysinfo_fill_in() called with priv==0\n");
+		qc_debug(hdl, "qc_sysinfo_process() called with priv==NULL\n");
 		goto out;
 	}
 	// create a global copy which is parsed in one go across the functions. Therefore, pass on

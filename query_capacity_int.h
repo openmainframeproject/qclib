@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2015 */
+/* Copyright IBM Corp. 2013, 2016 */
 
 #ifndef QUERY_CAPACITY_INT
 #define QUERY_CAPACITY_INT
@@ -18,8 +18,11 @@
 #define STR_BUF_SIZE		257
 
 #define ATTR_SRC_SYSINFO	'S'
+#define ATTR_SRC_OCF		'O'
 #define ATTR_SRC_HYPFS		'H'
 #define ATTR_SRC_STHYI		'V'
+#define ATTR_SRC_POSTPROC	'P'	// Note: Post-processed attributes can have multiple origins - would be
+					//       complicated to figure out accurately. We leave it at 'P' for now
 #define ATTR_SRC_UNDEF		'_'
 
 #ifndef htobe16	// fallbacks for systems with a glibc < 2.9
@@ -47,27 +50,27 @@ struct qc_handle {
 
 struct qc_data_src {
 	int  (*open)(struct qc_handle *, char **);
-	int  (*process)(struct qc_handle *, iconv_t *, char *);
+	int  (*process)(struct qc_handle *, char *);
 	void (*dump)(struct qc_handle *, char *);
 	void (*close)(struct qc_handle *, char *);
 	int  (*lgm_check)(struct qc_handle *, const char *);
 	char *priv;
 };
 
-extern struct qc_data_src sysinfo, hypfs, sthyi;
+extern struct qc_data_src sysinfo, ocf, hypfs, sthyi;
 
 /* Utility functions */
-int qc_ebcdic_to_ascii(struct qc_handle *hdl, iconv_t *cd, char *inbuf, size_t insz);
-int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen, iconv_t *cd);
+int qc_ebcdic_to_ascii(struct qc_handle *hdl, char *inbuf, size_t insz);
+int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen);
 int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no, int layer_type);
 // Insert new layer 'inserted_hdl' of type 'type' before 'hdl'. Won't support inserting a new root
 int qc_insert_handle(struct qc_handle *hdl, struct qc_handle **inserted_hdl, int type);
 // Insert new layer 'appended_hdl' of type 'type' after 'hdl'
 int qc_append_handle(struct qc_handle *hdl, struct qc_handle **appended_hdl, int type);
-
+struct qc_handle *qc_get_cec_handle(struct qc_handle *hdl);
+struct qc_handle *qc_get_lpar_handle(struct qc_handle *hdl);
 struct qc_handle *qc_get_root_handle(struct qc_handle *hdl);
 struct qc_handle *qc_get_prev_handle(struct qc_handle *hdl);
-
 
 /* Debugging-related functions and variables */
 extern long  qc_dbg_level;
@@ -75,6 +78,7 @@ extern FILE *qc_dbg_file;
 extern char *qc_dbg_dump_dir;
 extern char *qc_dbg_use_dump;
 extern int   qc_dbg_indent;
+extern int   qc_consistency_check_requested;
 void qc_debug_indent_inc();
 void qc_debug_indent_dec();
 void qc_mark_dump_incomplete(struct qc_handle *hdl, char *missing_component);
