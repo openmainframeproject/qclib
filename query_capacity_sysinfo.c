@@ -1,8 +1,9 @@
-/* Copyright IBM Corp. 2013, 2017 */
+/* Copyright IBM Corp. 2013, 2018 */
 
 #define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/param.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
@@ -10,8 +11,6 @@
 #include "query_capacity_int.h"
 #include "query_capacity_data.h"
 
-
-#define MAX(a,b) ((a)>(b)?a:b)
 
 static const char *qc_sysinfo_delim = "\n";
 
@@ -169,12 +168,13 @@ static char *qc_copy_sysinfo(struct qc_handle *hdl, char *sysinfo) {
 			goto out; \
 		continue; \
 	}
-#define QC_SYSINFO_PARSE_LINE_INT(hdl, str, id) \
+#define QC_SYSINFO_PARSE_LINE_INT_inc(hdl, str, id, inc) \
 	if (sscanf(*line, str, &int_buf) > 0) { \
-		if (qc_set_attr_int(hdl, id, int_buf, ATTR_SRC_SYSINFO)) \
+		if (qc_set_attr_int(hdl, id, int_buf + inc, ATTR_SRC_SYSINFO)) \
 			goto out; \
 		continue; \
 	}
+#define QC_SYSINFO_PARSE_LINE_INT(hdl, str, id) QC_SYSINFO_PARSE_LINE_INT_inc(hdl, str, id, 0)
 #define QC_SYSINFO_PARSE_LINE_FLOAT(hdl, str, id) \
 	if (sscanf(*line, str, &float_buf)) { \
 		if (qc_set_attr_float(hdl, id, float_buf, ATTR_SRC_SYSINFO)) \
@@ -316,7 +316,7 @@ out:
 
 static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char **sptr, char **line) {
 	char *sysi = NULL, str_buf[STR_BUF_SIZE];	// large enough for all sscanf() calls by far
-	int int_buf, rc = -1;
+	int int_buf, rc = -1, ps_mtid = -1, *i;
 
 	qc_debug(hdl, "Retrieve /proc/sysinfo information for LPAR\n");
 	qc_debug_indent_inc();
@@ -331,17 +331,29 @@ static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char **sptr, ch
 		QC_SYSINFO_PARSE_LINE_INT(hdl, "Adjustment: %i", qc_adjustment);
 		if (strncmp(*line, "CPUs ", 5) == 0) {
 			*line += 5;
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Total: %i", qc_num_cpu_total);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Configured: %i", qc_num_cpu_configured);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Standby: %i", qc_num_cpu_standby);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Reserved: %i", qc_num_cpu_reserved);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Dedicated: %i", qc_num_cpu_dedicated);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Shared: %i", qc_num_cpu_shared);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Total: %i", qc_num_core_total);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Configured: %i", qc_num_core_configured);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Standby: %i", qc_num_core_standby);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Reserved: %i", qc_num_core_reserved);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Dedicated: %i", qc_num_core_dedicated);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Shared: %i", qc_num_core_shared);
+			QC_SYSINFO_PARSE_LINE_INT_inc(hdl, "G-MTID: %i", qc_num_cp_threads, 1);
+			QC_SYSINFO_PARSE_LINE_INT_inc(hdl, "S-MTID: %i", qc_num_ifl_threads, 1);
+			if (sscanf(*line, "PS-MTID: %i", &int_buf) > 0)
+				ps_mtid = int_buf + 1;
 		}
 		QC_SYSINFO_PARSE_LINE_STR(hdl, "Extended Name: %256[^\n]", 256, qc_layer_extended_name);
 		QC_SYSINFO_PARSE_LINE_STR(hdl, "UUID: %36s", 36, qc_layer_uuid);
 	}
 	rc = qc_derive_part_char_num(hdl);
+	// Apply threshold provided by ps_mtid if set
+	if (ps_mtid >= 0) {
+		qc_debug(hdl, "Apply PS-MTID limit of %d\n", ps_mtid);
+		if ((i = qc_get_attr_value_int(hdl, qc_num_cp_threads)) != NULL)
+			*i = MIN(ps_mtid, *i);
+		if ((i = qc_get_attr_value_int(hdl, qc_num_ifl_threads)) != NULL)
+			*i = MIN(ps_mtid, *i);
+	}
 
 out:
 	qc_debug_indent_dec();
@@ -382,10 +394,12 @@ static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char **sptr, cha
 		}
 		if (strncmp(*line, "CPUs ", 5) == 0) {
 			*line += 5;
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Total: %i", qc_num_cpu_total);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Configured: %i", qc_num_cpu_configured);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Standby: %i", qc_num_cpu_standby);
-			QC_SYSINFO_PARSE_LINE_INT(hdl, "Reserved: %i", qc_num_cpu_reserved);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Total: %i", qc_num_core_total);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Configured: %i", qc_num_core_configured);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Standby: %i", qc_num_core_standby);
+			QC_SYSINFO_PARSE_LINE_INT(hdl, "Reserved: %i", qc_num_core_reserved);
+			QC_SYSINFO_PARSE_LINE_INT_inc(hdl, "G-MTID: %i", qc_num_cp_threads, 1);
+			QC_SYSINFO_PARSE_LINE_INT_inc(hdl, "S-MTID: %i", qc_num_ifl_threads, 1);
 		}
 		QC_SYSINFO_PARSE_LINE_FLOAT(hdl, "Capability: %f", qc_capability);
 		QC_SYSINFO_PARSE_LINE_FLOAT(hdl, "Secondary Capability: %f", qc_secondary_capability);

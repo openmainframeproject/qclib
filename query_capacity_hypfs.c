@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2017 */
+/* Copyright IBM Corp. 2013, 2018 */
 
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
@@ -25,8 +25,10 @@
 #define QC_CPU_CONFIGURED	0x20
 
 #define HYPFS_NA		0
+#ifdef CONFIG_TEXTUAL_HYPFS
 #define HYPFS_AVAIL_ASCII_LPAR	1
 #define HYPFS_AVAIL_ASCII_ZVM	2
+#endif
 #define HYPFS_AVAIL_BIN_LPAR	3
 #define HYPFS_AVAIL_BIN_ZVM	4
 
@@ -122,6 +124,7 @@ static char *qc_get_path(struct qc_handle *hdl, const char *dbgfs, const char *f
 	return buf;
 }
 
+#ifdef CONFIG_TEXTUAL_HYPFS
 static void qc_dump_hypfs(struct qc_handle *hdl, char *hypfs) {
 	char *cmd;
 	int rc;
@@ -155,6 +158,7 @@ static void qc_dump_hypfs(struct qc_handle *hdl, char *hypfs) {
 
 	return;
 }
+#endif
 
 static void qc_dump_hypfs_bin(struct qc_handle *hdl, const char *diag, __u8 *data, ssize_t len) {
 	char *fname = NULL, *cmd;
@@ -226,10 +230,12 @@ static void qc_hypfs_dump(struct qc_handle *hdl, char *buf) {
 	if (!priv)
 		goto out;
 	switch(priv->avail) {
+#ifdef CONFIG_TEXTUAL_HYPFS
 	case HYPFS_AVAIL_ASCII_LPAR:
 	case HYPFS_AVAIL_ASCII_ZVM:
 		qc_dump_hypfs(hdl, priv->hypfs);
 		break;
+#endif
 	case HYPFS_AVAIL_BIN_LPAR:
 	case HYPFS_AVAIL_BIN_ZVM:
 		qc_dump_hypfs_bin(hdl, priv->diag, (__u8 *)priv->data, priv->len);
@@ -245,6 +251,7 @@ out:
 	return;
 }
 
+#ifdef CONFIG_TEXTUAL_HYPFS
 // path must be hypfs path ending with '.../cpus'
 static int qc_get_hypfs_cpu_types(struct qc_handle *hdl, const char *path,
 				  int *ifl_total, int *cp_total) {
@@ -354,6 +361,7 @@ out:
 
 	return rc;
 }
+#endif
 
 static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 	int ifl = 0, cp = 0, ifl_ded = 0, cp_ded = 0, ifl_cap = 0, cp_cap = 0, ifl_weight = 0,
@@ -499,8 +507,8 @@ static int qc_fill_in_hypfs_cec_values_bin(struct qc_handle *hdl, __u8 *data) {
 	    qc_set_attr_int(hdl, qc_num_ifl_total, num_ifl, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, num_ifl_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_shared, num_ifl - num_ifl_ded, ATTR_SRC_HYPFS) ||
-	    qc_set_attr_int(hdl, qc_num_cpu_dedicated, num_cp_ded + num_ifl_ded, ATTR_SRC_HYPFS) ||
-	    qc_set_attr_int(hdl, qc_num_cpu_shared, num_ifl + num_cp - num_cp_ded - num_ifl_ded, ATTR_SRC_HYPFS))
+	    qc_set_attr_int(hdl, qc_num_core_dedicated, num_cp_ded + num_ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_core_shared, num_ifl + num_cp - num_cp_ded - num_ifl_ded, ATTR_SRC_HYPFS))
 		rc = -1;
 
 out:
@@ -509,6 +517,7 @@ out:
 	return rc;
 }
 
+#ifdef CONFIG_TEXTUAL_HYPFS
 static int qc_read_file(struct qc_handle *hdl, const char *fpath, char *buf, int buflen) {
 	FILE *file;
 	int rc = 0;
@@ -524,6 +533,7 @@ static int qc_read_file(struct qc_handle *hdl, const char *fpath, char *buf, int
 
 	return rc;
 }
+#endif
 
 static int qc_read_diag_file(struct qc_handle *hdl, const char *dbgfs, struct hypfs_priv *priv) {
 	long buflen = sizeof(struct dfs_diag_hdr);
@@ -605,6 +615,7 @@ static struct qc_handle *qc_get_zvm_hdl(struct qc_handle *hdl, const char **s) {
 	return hdl;
 }
 
+#ifdef CONFIG_TEXTUAL_HYPFS
 static int qc_fill_in_hypfs_zvm_values(struct qc_handle *hdl, const char *hypfs) {
 	int fplen, cpu_count = 0, cap_num, rc = 0;
 	char str_buf[STR_BUF_SIZE], *fpath = NULL, *cap = NULL;
@@ -662,8 +673,7 @@ static int qc_fill_in_hypfs_zvm_values(struct qc_handle *hdl, const char *hypfs)
 	qc_debug(hdl, "Raw data: %d cpus, dedicated=%u, capped=%s\n", cpu_count, dedicated, cap);
 	if (cpu_count) {
 		/* the dedicated flag tells us, if the guest has got at least one dedicated CPU.
-		 * That means, we can only derive information, if no CPU is dedicated
-		 * (i.e. all shared) */
+		 * That means, we can only derive information, if no CPU is dedicated (i.e. all shared) */
 		if (dedicated == 0) { /* dedicated flag present and not set */
 			if (qc_set_attr_int(hdl, qc_num_cpu_shared, cpu_count, ATTR_SRC_HYPFS) ||
 			    qc_set_attr_int(hdl, qc_num_cpu_dedicated, 0, ATTR_SRC_HYPFS)) {
@@ -679,6 +689,7 @@ out:
 
 	return rc;
 }
+#endif
 
 // Returns diag data for highest layer z/VM instance in var 'data', with pointer to entire data
 // stored in 'buf' (must be free()'d), and updates hdl to point to respective handle.
@@ -736,10 +747,8 @@ static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, struct hypfs_p
 
 	// update shared cpu counts
 	if (dedicated == 0) {
-		/* the dedicated flag tells us, if the guest has got at
-		 * least one dedicated CPU. That means, we can only
-		 * derive information, if no CPU is dedicated (i.e.
-		 * all shared) */
+		/* the dedicated flag tells us, if the guest has got at least one dedicated CPU.
+		 * That means, we can only derive information, if no CPU is dedicated (i.e. all shared) */
 		if (qc_set_attr_int(hdl, qc_num_cpu_shared, htobe32(data->vcpus), ATTR_SRC_HYPFS) ||
 		    qc_set_attr_int(hdl, qc_num_cpu_dedicated, 0, ATTR_SRC_HYPFS)) {
 			rc = -4;
@@ -813,6 +822,7 @@ static int qc_get_mountpoint(struct qc_handle *hdl, char *fstype, char **mp) {
 	return 0;
 }
 
+#ifdef CONFIG_TEXTUAL_HYPFS
 static int qc_update_hypfs(struct qc_handle *hdl, const char *upath) {
 	FILE *file;
 	size_t rc;
@@ -859,6 +869,7 @@ static int qc_get_update_mod_time(struct qc_handle *hdl, const char *hypfs, time
 
 	return 0;
 }
+#endif
 
 static int qc_hypfs_open(struct qc_handle *hdl, char **buf) {
 	char *dbgfs = NULL, *fpath = NULL;
@@ -913,7 +924,6 @@ static int qc_hypfs_open(struct qc_handle *hdl, char **buf) {
 		}
 	} else
 		rc = 0;
-	// Note: The ASCII hypfs has to be parsed on the fly in qc_hypfs_process()
 
 out:
 	qc_debug_indent_dec();
@@ -934,11 +944,14 @@ static void qc_hypfs_close(struct qc_handle *hdl, char *buf) {
 
 static int qc_hypfs_process(struct qc_handle *hdl, char *buf) {
 	struct hypfs_priv *priv = (struct hypfs_priv *)buf;
+#ifdef CONFIG_TEXTUAL_HYPFS
 	char str_buf[STR_BUF_SIZE] = "";
 	time_t mtime, mtime_old;
 	char *fpath = NULL;
 	FILE *file = NULL;
-	int i, rc = 0;
+	int i;
+#endif
+	int rc = 0;
 
 	qc_debug(hdl, "Process hypfs\n");
 	qc_debug_indent_inc();
@@ -956,6 +969,7 @@ static int qc_hypfs_process(struct qc_handle *hdl, char *buf) {
 		goto out;
 	}
 
+#ifdef CONFIG_TEXTUAL_HYPFS
 	/* fallback to textual interface */
 	qc_debug(hdl, "Use textual hypfs API\n");
 	rc = qc_get_mountpoint(hdl, "s390_hypfs", &priv->hypfs);
@@ -1033,10 +1047,13 @@ static int qc_hypfs_process(struct qc_handle *hdl, char *buf) {
 mem_err:
 	qc_debug(hdl, "Error: Memory allocation error\n");
 	rc = -10;
+#endif
 out:
+#ifdef CONFIG_TEXTUAL_HYPFS
 	free(fpath);
 	if (file)
 		fclose(file);
+#endif
 	qc_debug_indent_dec();
 
 	return rc;

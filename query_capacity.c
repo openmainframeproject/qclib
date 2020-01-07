@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2017 */
+/* Copyright IBM Corp. 2013, 2018 */
 
 //_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
@@ -112,7 +112,7 @@ static int qc_debug_file_init(void) {
 				goto out_err;
 			}
 		}
-		qc_debug(NULL, "This is qclib v1.3.1, level a8efdba, date 2017-12-28 14:00:24 +0100\n");
+		qc_debug(NULL, "This is qclib v1.4.0, level 25f7956, date 2018-04-01 17:44:33 +0200\n");
 	}
 
 	return 0;
@@ -379,29 +379,29 @@ static int qc_consistency_check(struct qc_handle *hdl) {
 
 		switch (*etype) {
 		case QC_LAYER_TYPE_CEC:
-			if ((rc = qc_verify(hdl, qc_num_cpu_dedicated,  qc_num_cpu_shared,	ATTR_UNDEF,	     qc_num_cpu_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_cpu_configured, qc_num_cpu_standby,	qc_num_cpu_reserved, qc_num_cpu_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_total,	qc_num_ifl_total,	ATTR_UNDEF,	     qc_num_cpu_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,	qc_num_cp_dedicated,	ATTR_UNDEF,	     qc_num_cpu_dedicated, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_shared,	qc_num_cp_shared,	ATTR_UNDEF,	     qc_num_cpu_shared, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_cp_shared,	ATTR_UNDEF,	     qc_num_cp_total,  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF,	     qc_num_ifl_total, 1)))
+			if ((rc = qc_verify(hdl, qc_num_core_dedicated, qc_num_core_shared,	ATTR_UNDEF,	      qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_core_configured, qc_num_core_standby,	qc_num_core_reserved, qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_total,	 qc_num_ifl_total,	ATTR_UNDEF,	      qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,	 qc_num_cp_dedicated,	ATTR_UNDEF,	      qc_num_core_dedicated, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_shared,	 qc_num_cp_shared,	ATTR_UNDEF,	      qc_num_core_shared, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,    qc_num_cp_shared,	ATTR_UNDEF,	      qc_num_cp_total,  1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,   qc_num_ifl_shared,	ATTR_UNDEF,	      qc_num_ifl_total, 1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_LPAR:
-			if ((rc = qc_verify(hdl, qc_num_cpu_dedicated,  qc_num_cpu_shared,	ATTR_UNDEF,	    qc_num_cpu_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_cpu_configured, qc_num_cpu_reserved,	qc_num_cpu_standby, qc_num_cpu_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_cp_shared,	ATTR_UNDEF,	    qc_num_cp_total,  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF,	    qc_num_ifl_total, 1)))
+			if ((rc = qc_verify(hdl, qc_num_core_dedicated,  qc_num_core_shared,	ATTR_UNDEF,	     qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_core_configured, qc_num_core_reserved,	qc_num_core_standby, qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,	 qc_num_cp_shared,	ATTR_UNDEF,	     qc_num_cp_total,  1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,   qc_num_ifl_shared,	ATTR_UNDEF,	     qc_num_ifl_total, 1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_ZVM_HYPERVISOR:
-			if ((rc = qc_verify(hdl, qc_num_cpu_dedicated, qc_num_cpu_shared,	ATTR_UNDEF, qc_num_cpu_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_total,      qc_num_ifl_total,	ATTR_UNDEF, qc_num_cpu_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,  qc_num_ifl_dedicated,	ATTR_UNDEF, qc_num_cpu_dedicated, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_shared,     qc_num_ifl_shared,	ATTR_UNDEF, qc_num_cpu_shared,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,  qc_num_cp_shared,	ATTR_UNDEF, qc_num_cp_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated, qc_num_ifl_shared,	ATTR_UNDEF, qc_num_ifl_total,	  1)))
+			if ((rc = qc_verify(hdl, qc_num_core_dedicated, qc_num_core_shared,	ATTR_UNDEF, qc_num_core_total,	  1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_total,       qc_num_ifl_total,	ATTR_UNDEF, qc_num_core_total,	  1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_ifl_dedicated,	ATTR_UNDEF, qc_num_core_dedicated, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_shared,      qc_num_ifl_shared,	ATTR_UNDEF, qc_num_core_shared,	  1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_cp_shared,	ATTR_UNDEF, qc_num_cp_total,	  1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF, qc_num_ifl_total,	  1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_ZVM_GUEST:
@@ -415,7 +415,7 @@ static int qc_consistency_check(struct qc_handle *hdl) {
 				goto out;
 			break;
 		case QC_LAYER_TYPE_KVM_HYPERVISOR:
-			if ((rc = qc_verify(hdl, qc_num_cpu_shared, 	qc_num_cpu_dedicated,	ATTR_UNDEF,	    qc_num_cpu_total, 1)) ||
+			if ((rc = qc_verify(hdl, qc_num_core_shared, 	qc_num_core_dedicated,	ATTR_UNDEF,	    qc_num_core_total, 1)) ||
 			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,	qc_num_ifl_shared,	ATTR_UNDEF,	    qc_num_ifl_total, 1)) ||
 			    (rc = qc_verify(hdl, qc_num_cp_dedicated,	qc_num_cp_shared,	ATTR_UNDEF,	    qc_num_cp_total, 1)))
 				goto out;
@@ -444,6 +444,16 @@ static int qc_copy_attr_value(struct qc_handle *tgt, struct qc_handle *src, enum
 	return i ? qc_set_attr_int(tgt, id, *i, ATTR_SRC_POSTPROC) : 0;
 }
 
+// src layer can have either qc_num_core_* (in case of LPAR) or qc_num_cpu_* (in case of e.g. KVM guest) attributes!
+static int qc_copy_attr_value_rename(struct qc_handle *tgt, enum qc_attr_id tgtid, struct qc_handle *src, enum qc_attr_id altsrcid) {
+	int *i = qc_get_attr_value_int(src, tgtid);
+
+	if (!i)
+		i = qc_get_attr_value_int(src, altsrcid);
+
+	return i ? qc_set_attr_int(tgt, tgtid, *i, ATTR_SRC_POSTPROC) : 0;
+}
+
 static int qc_post_process_KVM_host(struct qc_handle *hdl) {
 	struct qc_handle *parent = qc_get_prev_handle(hdl);
 	int *num_conf, rc;
@@ -461,14 +471,17 @@ static int qc_post_process_KVM_host(struct qc_handle *hdl) {
 		     qc_copy_attr_value(hdl, parent, qc_num_cp_dedicated) ||
 		     qc_copy_attr_value(hdl, parent, qc_num_cp_shared);
 	// only parent layer's configured CPUs are available to the host
-	num_conf = qc_get_attr_value_int(parent, qc_num_cpu_configured);
+	num_conf = qc_get_attr_value_int(parent, qc_num_core_configured);
+	if (!num_conf)
+		num_conf = qc_get_attr_value_int(parent, qc_num_cpu_configured);
 	rc |= !num_conf ||
-	      qc_set_attr_int(hdl, qc_num_cpu_total, *num_conf, ATTR_SRC_POSTPROC) ||
-	      qc_copy_attr_value(hdl, parent, qc_num_cpu_dedicated) ||
-	      qc_copy_attr_value(hdl, parent, qc_num_cpu_shared) ||
+	      qc_set_attr_int(hdl, qc_num_core_total, *num_conf, ATTR_SRC_POSTPROC) ||
+	      qc_copy_attr_value_rename(hdl, qc_num_core_dedicated, parent, qc_num_cpu_dedicated) ||
+	      qc_copy_attr_value_rename(hdl, qc_num_core_shared, parent, qc_num_cpu_shared) ||
 	      qc_copy_attr_value(hdl, parent, qc_num_ifl_total) ||
 	      qc_copy_attr_value(hdl, parent, qc_num_ifl_dedicated) ||
 	      qc_copy_attr_value(hdl, parent, qc_num_ifl_shared);
+
 	qc_debug_indent_dec();
 
 	return rc;
@@ -487,7 +500,7 @@ static int qc_post_process_KVM_guest(struct qc_handle *hdl) {
 	    qc_set_attr_int(hdl, qc_num_ifl_shared, *num_conf, ATTR_SRC_SYSINFO) ||
 	    qc_set_attr_int(hdl, qc_num_cpu_dedicated, 0, ATTR_SRC_SYSINFO) ||
 	    qc_set_attr_int(hdl, qc_num_cpu_shared, *num_conf, ATTR_SRC_SYSINFO)) {
-		rc = -2;
+		rc = -1;
 		goto out;
 	}
 
@@ -530,7 +543,6 @@ static int qc_post_processing(struct qc_handle *hdl) {
 	qc_debug_indent_dec();
 
 	return 0;
-
 fail:
 	qc_debug_indent_dec();
 
@@ -766,7 +778,7 @@ static struct qc_handle *qc_get_layer_handle(void *config, int layer) {
 }
 
 static int qc_is_attr_id_valid(enum qc_attr_id id) {
-	return id <= qc_prorated_core_time;
+	return id <= qc_num_core_shared;
 }
 
 int qc_get_attribute_string(void *cfg, enum qc_attr_id id, int layer, const char **value) {

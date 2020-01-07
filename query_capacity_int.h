@@ -85,8 +85,6 @@ void qc_debug_indent_inc();
 void qc_debug_indent_dec();
 void qc_mark_dump_incomplete(struct qc_handle *hdl, char *missing_component);
 
-/* Build Customization */
-#define CONFIG_DEBUG_TIMESTAMPS
 
 #ifdef CONFIG_DEBUG_TIMESTAMPS
 #define qc_debug(hdl, arg, ...)	if (qc_dbg_level > 0) { \

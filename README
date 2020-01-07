@@ -94,6 +94,37 @@ For enhancements, please describe the proposed change and its benefits.
 Release History:
 ================
 
+1.4.0
+    Changes:
+    - Added SMT support by properly differentiating between cores and CPUs.
+      I.e. switched from qc_num_cpu_* to qc_num_core_* attributes in layers
+      CEC, LPAR, ZVM_HYPERVISOR and KVM_HYPERVISOR.
+      NOTE: qc_num_cpu_* attributes remain to be valid in these cases to
+            preserve backwards compatibility for now. This will be removed in
+            one of the next releases! It is recommended to switch to the new
+            attributes _now_ and test with CONFIG_V1_COMPATIBILITY disabled!
+    - Added new attributes qc_num_threads_cp and qc_num_threads_ifl to layers
+      CEC, LPAR and ZVM_HYPERVISOR.
+    - Deprecated attribute qc_mobility_eligible (remains valid for now) and
+      replaced with qc_mobility_enabled to match z/VM terminology. Likewise
+      switched QC_LAYER_TYPE_ZVM_CPU_POOL to QC_LAYER_TYPE_ZVM_RESOURCE_POOL.
+    - Moved build customization defines (e.g. CONFIG_V1_COMPATIBILITY) to
+      query_capacity.h.
+    - Don't build with textual hypfs per default anymore due to unrecoverable
+      issues (see section 'Bug fixes'). Since all Linux distributions ship
+      with debugfs (providing binary hypfs support), overriding textual hypfs,
+      for years, this change will hardly ever be noticable. Enable define
+      CONFIG_TEXTUAL_HYPFS in query_capacity.h to revert.
+      Note that textual hypfs support will be removed in a future release.
+
+    Bug fixes:
+    - Added an exception to consistency check to ignore inconsistencies between
+      textual hypfs and STHYI for attributes qc_num_cp_total and
+      qc_num_ifl_total in the LPAR layer.
+      Background: Textual hypfs cannot tell whether a core is configured or
+                  not. It therefore reports all cores as configured, which can
+                  be wrong.
+
 1.3.1
     Bug fixes:
     - Security: Fix PATH attack vulnerability when dumping (see QC_DEBUG=2)
@@ -187,7 +218,7 @@ Release History:
       higher)
     - Added detection of Live Guest Migration while retrieving data
     - Handled NULL pointer arguments in all API calls
-    - Reported errors as such when occuring while searching for capacity
+    - Reported errors as such when occurring while searching for capacity
       information
 
     Bug fixes:
@@ -216,5 +247,4 @@ Release History:
 
 
 
-
-Copyright IBM Corp. 2013, 2017
+Copyright IBM Corp. 2013, 2018

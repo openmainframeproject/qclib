@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2017 */
+/* Copyright IBM Corp. 2013, 2018 */
 
 /** @file */
 
@@ -6,13 +6,18 @@
 #define QUERY_CAPACITY
 
 
+/* Build Customization */
+#define CONFIG_DEBUG_TIMESTAMPS		// Print timestamps in log
+#define CONFIG_V1_COMPATIBILITY		// Support functionality deprecated in v1.x
+//#define CONFIG_TEXTUAL_HYPFS		// Use data from textual hypfs if available
+
 /** \enum qc_attr_id
  * Defines the attributes retrievable by the API. Attributes can
  * exist for multiple layers. Also, attributes will only be valid if retrieved
  * as the correct type.
  *
  * The following tables detail which attributes of what types are available for
- * what layers. The letter encoding in the 'Src' column describes how the
+ * what layers. The letter encoding in the '\c Src' column describes how the
  * value is gained:
  *   - **S**: Provided by \c /proc/sysinfo, which is present in all Linux on z flavors.
  *   - **O**: Provided by \c /sys/firmware/ocf. Available in Linux kernel 3.0 or higher.
@@ -24,7 +29,7 @@
  *   - **V**: Provided by the STHYI instruction.
  *            - <i>z/VM Linux guests</i>: Requires z/VM 6.3 with APAR VM65419 or higher.
  *              UM34746 for z/VM 6.3.0 APAR VM65716 is required for LPAR groups support
- *              (see layer \c QC_LAYER_TYPE_LPAR_GROUP).
+ *              (see layer \c #QC_LAYER_TYPE_LPAR_GROUP).
  *            - <i>KVM Linux guests</i>: Requires Linux kernel 4.8 or higher in the KVM host.
  *            - <i>Linux LPAR</i>: Requires Linux kernel 4.15 or higher in the KVM host.
  *
@@ -34,20 +39,47 @@
  * value in a later phase does not succeed, it will not dismiss the existing
  * value, if a previous phase has set it before.<br>
  *
+ *
+ * ### SMT ###
+ * SMT was introduced starting with z13/LinuxONE.<br>
+ * When SMT is turned off (or not available), the terms <i>core</i> and <i>CPU</i> are
+ * synonymous. But when SMT is enabled, <i>CPU</i> refers to a thread running on a
+ * <i>core</i>.<br>
+ * As a general rule, IFL and CP counts (eg. #qc_num_ifl_total and #qc_num_cp_total
+ * respectively)
+ * - refer to cores if the layer reports cores, and
+ * - refer to CPUs if the layer reports CPUs.
+ * E.g. \c #QC_LAYER_TYPE_LPAR reports cores (see e.g. #qc_num_core_total), hence
+ * #qc_num_ifl_shared refers to cores, too.<br>
+ * In layers reporting cores, use attributes #qc_num_cp_threads and #qc_num_ifl_threads to
+ * derive the number of CPUs.
+ *
  * ### Notes ###
- * - Special care needs to be taken with respect to [5] when processing #qc_num_cpu_total,
- *   #qc_num_cpu_dedicated and #qc_num_cpu_shared in layers of type QC_LAYER_TYPE_LPAR.
- * - When MT is enabled, all layers above the LPAR layer will report each thread as a separate
- *   CPU. Otherwise, the term <i>CPU</i> is synonymous with <I>core</I>.
- * - A z/VM-guest running in a z/VM-CPU-pool is a layer higher than the z/VM-CPU-pool
+ * - Special care needs to be taken with respect to [5] when processing #qc_num_core_total,
+ *   #qc_num_core_dedicated and #qc_num_core_shared in layers of type \c #QC_LAYER_TYPE_LPAR.
+ * - With SMT enabled:
+ *     - All layers above the LPAR layer will report each thread as a separate <i>CPU</i>.
+ *       Otherwise, the term <i>CPU</i> is synonymous with <I>core</I>.
+ *     - Layers of types \c #QC_LAYER_TYPE_ZVM_HYPERVISOR and \c #QC_LAYER_TYPE_KVM_HYPERVISOR
+ *       running above one or more layers of type \c #QC_LAYER_TYPE_ZVM_HYPERVISOR or
+ *       \c #QC_LAYER_TYPE_KVM_HYPERVISOR (i.e. within a guest of a hypervisor), will
+ *       report <i>CPU</i>s all the time, no matter what the attribute names might imply.
+ *     - On Linux, use '<TT>lscpu -e</TT>' to get a detailed list of the CPU/core
+ *       topology. Likewise, use '<TT>QUERY PROCESSORS</TT>' on z/VM for similar
+ *       information. However, beware that if the respective instance is not running
+ *       immediately on top of a layer of type \c #QC_LAYER_TYPE_LPAR, results need to be
+ *       interpreted according to the previous note.
+ *     - Layers of type \c #QC_LAYER_TYPE_ZVM_GUEST report any capacity cappings (see attributes
+ *       #qc_cp_capped_capacity and #qc_ifl_capped_capacity) in units of cores, although CPs
+ *       and IFLs that they refer to are reported as <i>CPU</i>s.
  * - All strings (char pointers) carry the trailing zero byte.
  * - See #qc_attr_id for general explanation of attributes, and the \c 'Comment' column
  *   for layer-specific considerations
  *
  * Attributes for CECs (layer 0)       | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_CEC
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_HOST
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_CEC
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_HOST
  * #qc_layer_type                      |string|     | Hardcoded to \c "CEC"
  * #qc_layer_category                  |string|     | Hardcoded to \c "HOST"
  * #qc_layer_name                      |string|<CODE>O&nbsp;V</CODE>| CPC name of machine
@@ -57,18 +89,20 @@
  * #qc_model                           |string|<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_sequence_code                   |string|<CODE>S&nbsp;V</CODE>| \n
  * #qc_plant                           |string|<CODE>S&nbsp;V</CODE>| \n
- * #qc_num_cpu_total                   | int  |<CODE>S</CODE>| Sum of #qc_num_cpu_configured, #qc_num_cpu_reserved and #qc_num_cpu_standby, or #qc_num_cpu_dedicated and #qc_num_cpu_shared.<br><b>Note</b>: Sum of #qc_num_cp_total and #qc_num_ifl_total might be smaller, since assists and spares are missing
- * #qc_num_cpu_configured              | int  |<CODE>S&nbsp;&nbsp;</CODE>| General purpose CPUs only without IFLs
- * #qc_num_cpu_standby                 | int  |<CODE>S&nbsp;&nbsp;</CODE>| General purpose CPUs which are in the (very brief) process of being added to the configuration
- * #qc_num_cpu_reserved                | int  |<CODE>S&nbsp;&nbsp;</CODE>| IFLs, zIIPs, spares, excluding IFPs (Internal Firmware Processors)
- * #qc_num_cpu_dedicated               | int  |<CODE>&nbsp;hV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated<br><b>Note</b>: \b [4]
- * #qc_num_cpu_shared                  | int  |<CODE>&nbsp;hV</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared<br><b>Note</b>: \b [4]
- * #qc_num_cp_total                    | int  |<CODE>&nbsp;HV</CODE>| Equals the sum of #qc_num_cp_dedicated and #qc_num_cp_shared<br><b>Note</b>: \b [4]
- * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;hV</CODE>| <b>Note</b>: \b [4]
- * #qc_num_cp_shared                   | int  |<CODE>&nbsp;hV</CODE>| <b>Note</b>: \b [4]
- * #qc_num_ifl_total                   | int  |<CODE>&nbsp;HV</CODE>| Equals the sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared<br><b>Note</b>: \b [4]
- * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;hV</CODE>| <b>Note</b>: \b [4]
- * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;hV</CODE>| <b>Note</b>: \b [4]
+ * #qc_num_core_total                  | int  |<CODE>S</CODE>| Sum of #qc_num_core_configured, #qc_num_core_reserved and #qc_num_core_standby.<br><b>Note</b>: Sum of #qc_num_cp_total and #qc_num_ifl_total might be smaller, since assists and spares are missing
+ * #qc_num_core_configured             | int  |<CODE>S&nbsp;&nbsp;</CODE>| General purpose cores only without IFLs
+ * #qc_num_core_standby                | int  |<CODE>S&nbsp;&nbsp;</CODE>| General purpose cores which are in the (very brief) process of being added to the configuration
+ * #qc_num_core_reserved               | int  |<CODE>S&nbsp;&nbsp;</CODE>| IFLs, zIIPs, spares, excluding IFPs (Internal Firmware Processors)
+ * #qc_num_core_dedicated              | int  |<CODE>&nbsp;hV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated<br><b>Note</b>: \b [4]
+ * #qc_num_core_shared                 | int  |<CODE>&nbsp;hV</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared<br><b>Note</b>: \b [4]
+ * #qc_num_cp_total                    | int  |<CODE>&nbsp;HV</CODE>| Equals the sum of #qc_num_cp_dedicated and #qc_num_cp_shared<br>Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_num_cp_shared                   | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_num_ifl_total                   | int  |<CODE>&nbsp;HV</CODE>| Equals the sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared<br>Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_num_cp_threads                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| Number of threads/CPUs per CP core that the CEC is capable of<br><b>Note</b>: Requires Linux kernel 4.4 or higher
+ * #qc_num_ifl_threads                 | int  |<CODE>S&nbsp;&nbsp;</CODE>| Number of threads/CPUs per IFL core that the CEC is capable of<br><b>Note</b>: Requires Linux kernel 4.4 or higher
  * #qc_capability                      | float|<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_secondary_capability            | float|<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_capacity_adjustment_indication  | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
@@ -76,18 +110,18 @@
  *
  * Attributes for LPAR Groups          | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_LPAR_GROUP
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_POOL
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_LPAR_GROUP
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_POOL
  * #qc_layer_type                      |string|     | Hardcoded to \c "LPAR-Group"
  * #qc_layer_category                  |string|     | Hardcoded to \c "POOL"
  * #qc_layer_name                      |string|<CODE>&nbsp;hV</CODE>| Name of LPAR group
- * #qc_cp_absolute_capping             | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_ifl_absolute_capping            | int  |<CODE>&nbsp;hV</CODE>| \n
+ * #qc_cp_absolute_capping             | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_ifl_absolute_capping            | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
  *
  * Attributes for LPARs                | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_LPAR
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_GUEST
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_LPAR
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_GUEST
  * #qc_layer_type                      |string|     | Hardcoded to \c "LPAR"
  * #qc_layer_category                  |string|     | Hardcoded to \c "GUEST"
  * #qc_layer_name                      |string|<CODE>S&nbsp;V</CODE>| Name of LPAR, limited to 8 characters
@@ -97,28 +131,30 @@
  * #qc_partition_char                  |string|<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_partition_char_num              | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_adjustment                      | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
- * #qc_num_cpu_total                   | int  |<CODE>S</CODE>| Total number of IFLs and CPs configured in the LPARs activation profile
- * #qc_num_cpu_configured              | int  |<CODE>S&nbsp;&nbsp;</CODE>| <b>Note</b>: \b [5]
- * #qc_num_cpu_standby                 | int  |<CODE>S&nbsp;&nbsp;</CODE>| Operational CPUs that require add'l configuration within the LPAR image to become usable<br><b>Note</b>: \b [5]
- * #qc_num_cpu_reserved                | int  |<CODE>S&nbsp;&nbsp;</CODE>| Operational CPUs that require add'l interaction by the LPAR's administrator to become usable<br><b>Note</b>: \b [5]
- * #qc_num_cpu_dedicated               | int  |<CODE>S&nbsp;&nbsp;</CODE>| Dedicated operational CPUs only<b>Note</b>: \b [5], hence sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated can be larger
- * #qc_num_cpu_shared                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| Shared operational CPUs only<b>Note</b>: \b [5], hence sum of #qc_num_cp_shared and #qc_num_ifl_shared can be larger
- * #qc_num_cp_total                    | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared. Considers configured CPs only.
- * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_num_cp_shared                   | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_num_ifl_total                   | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared. Considers configured IFLs only.
- * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_cp_absolute_capping             | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_cp_weight_capping               | int  |<CODE>&nbsp;hV</CODE>| <b>Note</b>: \b [4]
- * #qc_ifl_absolute_capping            | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_ifl_weight_capping              | int  |<CODE>&nbsp;hV</CODE>| <b>Note</b>: \b [4]
+ * #qc_num_core_total                  | int  |<CODE>S</CODE>| Total number of IFLs and CPs configured in the LPARs activation profile
+ * #qc_num_core_configured             | int  |<CODE>S&nbsp;&nbsp;</CODE>| <b>Note</b>: \b [5]
+ * #qc_num_core_standby                | int  |<CODE>S&nbsp;&nbsp;</CODE>| Operational cores that require add'l configuration within the LPAR image to become usable<br><b>Note</b>: \b [5]
+ * #qc_num_core_reserved               | int  |<CODE>S&nbsp;&nbsp;</CODE>| Operational cores that require add'l interaction by the LPAR's administrator to become usable<br><b>Note</b>: \b [5]
+ * #qc_num_core_dedicated              | int  |<CODE>S&nbsp;&nbsp;</CODE>| Dedicated operational cores only<br><b>Note</b>: \b [5], hence sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated can be larger
+ * #qc_num_core_shared                 | int  |<CODE>S&nbsp;&nbsp;</CODE>| Shared operational cores only<br><b>Note</b>: \b [5], hence sum of #qc_num_cp_shared and #qc_num_ifl_shared can be larger
+ * #qc_num_cp_total                    | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared. Considers configured CPs only.<br>Reported in unit of cores
+ * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_num_cp_shared                   | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_num_ifl_total                   | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared. Considers configured IFLs only.<br>Reported in unit of cores
+ * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_num_cp_threads                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| Number of threads/CPUs per CP core configured for this LPAR<br><b>Note</b>: Requires Linux kernel 4.3 or higher
+ * #qc_num_ifl_threads                 | int  |<CODE>S&nbsp;&nbsp;</CODE>| Number of threads/CPUs per IFL core configured for this LPAR<br><b>Note</b>: Requires Linux kernel 4.3 or higher
+ * #qc_cp_absolute_capping             | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_cp_weight_capping               | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores<br><b>Note</b>: \b [4]
+ * #qc_ifl_absolute_capping            | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores
+ * #qc_ifl_weight_capping              | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores<br><b>Note</b>: \b [4]
  *
  *
  * Attributes for z/VM hypervisors     | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_ZVM_HYPERVISOR
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_HOST
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_ZVM_HYPERVISOR
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_HOST
  * #qc_layer_type                      |string|     | Hardcoded to \c "z/VM-hypervisor"
  * #qc_layer_category                  |string|     | Hardcoded to \c "HOST"
  * #qc_layer_name                      |string|<CODE>&nbsp;&nbsp;V</CODE>| System identifier of the hypervisor
@@ -127,36 +163,38 @@
  * #qc_adjustment                      | int  |<CODE>S&nbsp;&nbsp;</CODE>| Adjustment factor of z/VM
  * #qc_hardlimit_consumption           | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_prorated_core_time              | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_cpu_total                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cpu_dedicated and #qc_num_cpu_shared
- * #qc_num_cpu_dedicated               | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated
- * #qc_num_cpu_shared                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared
- * #qc_num_cp_total                    | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared
- * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_cp_shared                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_ifl_total                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared
- * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
+ * #qc_num_core_total                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_core_dedicated and #qc_num_core_shared
+ * #qc_num_core_dedicated              | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated
+ * #qc_num_core_shared                 | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared
+ * #qc_num_cp_total                    | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared<br>Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_cp_shared                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_ifl_total                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared<br>Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_cp_threads                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| Number of threads/CPUs per CP core in use
+ * #qc_num_ifl_threads                 | int  |<CODE>&nbsp;&nbsp;V</CODE>| Number of threads/CPUs per IFL core in use
  *
  *
- * Attributes for z/VM CPU pools       | Type | Src | Comment
- * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_ZVM_CPU_POOL
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_POOL
- * #qc_layer_type                      |string|     | Hardcoded to \c "z/VM-CPU-pool"
+ * Attributes for z/VM resource pools  | Type | Src | Comment
+ * ---------------------------------------|------|-----|-------------------------------------
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_ZVM_RESOURCE_POOL
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_POOL
+ * #qc_layer_type                      |string|     | Hardcoded to \c "z/VM-resource-pool", or \c "z/VM-CPU-pool" if compiled with CONFIG_V1_COMPATIBILITY
  * #qc_layer_category                  |string|     | Hardcoded to \c "POOL"
- * #qc_layer_name                      |string|<CODE>&nbsp;&nbsp;V</CODE>| Name of CPU pool
+ * #qc_layer_name                      |string|<CODE>&nbsp;&nbsp;V</CODE>| Name of resource pool
  * #qc_cp_limithard_cap                | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_cp_capacity_cap                 | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_cp_capped_capacity              | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
+ * #qc_cp_capped_capacity              | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
  * #qc_ifl_limithard_cap               | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_ifl_capacity_cap                | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_ifl_capped_capacity             | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
+ * #qc_ifl_capped_capacity             | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
  *
  *
- * Attributes for z/VM guests           | Type | Src | Comment
+ * Attributes for z/VM guests          | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_ZVM_GUEST
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_GUEST
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_ZVM_GUEST
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_GUEST
  * #qc_layer_type                      |string|     | Hardcoded to \c "z/VM-guest"
  * #qc_layer_category                  |string|     | Hardcoded to \c "GUEST"
  * #qc_layer_name                      |string|<CODE>S&nbsp;V</CODE>| Userid of guest
@@ -168,45 +206,45 @@
  * #qc_num_cpu_reserved                | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_num_cpu_dedicated               | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated
  * #qc_num_cpu_shared                  | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared
- * #qc_num_cp_total                    | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared
- * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_cp_shared                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_ifl_total                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared
- * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
- * #qc_mobility_eligible               | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
+ * #qc_num_cp_total                    | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared<br>Reported in unit of CPUs
+ * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of CPUs
+ * #qc_num_cp_shared                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of CPUs
+ * #qc_num_ifl_total                   | int  |<CODE>&nbsp;&nbsp;V</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared<br>Reported in unit of CPUs
+ * #qc_num_ifl_dedicated               | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of CPUs
+ * #qc_num_ifl_shared                  | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of CPUs
+ * #qc_mobility_enabled                | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_has_multiple_cpu_types          | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_cp_dispatch_limithard           | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_cp_dispatch_type                | int  |<CODE>&nbsp;&nbsp;V</CODE>| Only set in presence of CPs
- * #qc_cp_capped_capacity              | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
+ * #qc_cp_capped_capacity              | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
  * #qc_ifl_dispatch_limithard          | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
  * #qc_ifl_dispatch_type               | int  |<CODE>&nbsp;&nbsp;V</CODE>| Only set in presence of IFLs
- * #qc_ifl_capped_capacity             | int  |<CODE>&nbsp;&nbsp;V</CODE>| \n
+ * #qc_ifl_capped_capacity             | int  |<CODE>&nbsp;&nbsp;V</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
  *
  *
  * Attributes for KVM hypervisors      | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_KVM_HYPERVISOR
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_HOST
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_KVM_HYPERVISOR
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_HOST
  * #qc_layer_type                      |string|     | Hardcoded to \c "KVM-hypervisor"
  * #qc_layer_category                  |string|     | Hardcoded to \c "HOST"
  * #qc_control_program_id              |string|<CODE>S&nbsp;&nbsp;</CODE>| Host ID
  * #qc_adjustment                      | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
- * #qc_num_cpu_total                   | int  |<CODE>S&nbsp;&nbsp;</CODE>| Sum of #qc_num_cpu_dedicated and #qc_num_cpu_shared.
- * #qc_num_cpu_dedicated               | int  |<CODE>SHV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated.\n
- * #qc_num_cpu_shared                  | int  |<CODE>SHV</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared.\n
- * #qc_num_cp_total                    | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared
- * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_num_cp_shared                   | int  |<CODE>&nbsp;hV</CODE>| \n
- * #qc_num_ifl_total                   | int  |<CODE>SHV</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared
- * #qc_num_ifl_dedicated               | int  |<CODE>ShV</CODE>| \n
- * #qc_num_ifl_shared                  | int  |<CODE>ShV</CODE>| \n
+ * #qc_num_core_total                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| Sum of #qc_num_core_dedicated and #qc_num_core_shared
+ * #qc_num_core_dedicated              | int  |<CODE>SHV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_ifl_dedicated
+ * #qc_num_core_shared                 | int  |<CODE>SHV</CODE>| Sum of #qc_num_cp_shared and #qc_num_ifl_shared
+ * #qc_num_cp_total                    | int  |<CODE>&nbsp;HV</CODE>| Sum of #qc_num_cp_dedicated and #qc_num_cp_shared<br>Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_cp_dedicated                | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_cp_shared                   | int  |<CODE>&nbsp;hV</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_ifl_total                   | int  |<CODE>SHV</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared<br>Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_ifl_dedicated               | int  |<CODE>ShV</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
+ * #qc_num_ifl_shared                  | int  |<CODE>ShV</CODE>| Reported in unit of cores unless run as a guest of another hypervisor other than LPAR
  *
  *
  * Attributes for KVM guests           | Type | Src | Comment
  * ------------------------------------|------|-----|-------------------------------------
- * #qc_layer_type_num                  | int  |     | Hardcoded to \c QC_LAYER_TYPE_KVM_GUEST
- * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_GUEST
+ * #qc_layer_type_num                  | int  |     | Hardcoded to \c #QC_LAYER_TYPE_KVM_GUEST
+ * #qc_layer_category_num              | int  |     | Hardcoded to \c #QC_LAYER_CAT_GUEST
  * #qc_layer_type                      |string|     | Hardcoded to \c "KVM-guest"
  * #qc_layer_category                  |string|     | Hardcoded to \c "GUEST"
  * #qc_layer_name                      |string|<CODE>S&nbsp;&nbsp;</CODE>| Guest name truncated to 8 characters<br><b>Note</b>: \b [1]
@@ -218,9 +256,9 @@
  * #qc_num_cpu_reserved                | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_num_cpu_dedicated               | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_num_cpu_shared                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
- * #qc_num_ifl_total                   | int  |<CODE>S&nbsp;&nbsp;</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared
- * #qc_num_ifl_dedicated               | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
- * #qc_num_ifl_shared                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
+ * #qc_num_ifl_total                   | int  |<CODE>S&nbsp;&nbsp;</CODE>| Sum of #qc_num_ifl_dedicated and #qc_num_ifl_shared<br>Reported in unit of CPUs
+ * #qc_num_ifl_dedicated               | int  |<CODE>S&nbsp;&nbsp;</CODE>| Reported in unit of CPUs
+ * #qc_num_ifl_shared                  | int  |<CODE>S&nbsp;&nbsp;</CODE>| Reported in unit of CPUs
  * #qc_ifl_dispatch_type               | int  |<CODE>SHV</CODE>| \n
  *
  * \b [1] Available starting with RHEL7.2 and SLES12SP1<br>
@@ -228,8 +266,8 @@
  * \b [3] <I>z/VM: CP Commands and Utilities Reference</I>, SC24-6175<br>
  * \b [4] Requires global performance data to be enabled in the LPAR's activation profile<br>
  * \b [5] As of this writing, in LPARs with both CPs and IFLs defined in its activation profile, only CPs can become operational.
- *        Therefore, IFL counts would not appear in any of #qc_num_cpu_configured, #qc_num_cpu_standby, #qc_num_cpu_reserved,
- *        #qc_num_cpu_dedicated or #qc_num_cpu_shared
+ *        Therefore, IFL counts would not appear in any of #qc_num_core_configured, #qc_num_core_standby, #qc_num_core_reserved,
+ *        #qc_num_core_dedicated or #qc_num_core_shared
  */
 enum qc_layer_types {
 	/** CEC */
@@ -240,8 +278,10 @@ enum qc_layer_types {
 	QC_LAYER_TYPE_LPAR = 2,
 	/** z/VM Hypervisor */
 	QC_LAYER_TYPE_ZVM_HYPERVISOR = 3,
-	/** z/VM CPU Pool */
+	/** z/VM CPU Pool (deprecated, use QC_LAYER_TYPE_ZVM_RESOURCE_POOL instead) */
 	QC_LAYER_TYPE_ZVM_CPU_POOL = 4,
+	/** z/VM Resource Pool */
+	QC_LAYER_TYPE_ZVM_RESOURCE_POOL = 4,
 	/** z/VM Guest */
 	QC_LAYER_TYPE_ZVM_GUEST = 5,
 	/** KVM Hypervisor */
@@ -302,11 +342,11 @@ enum qc_attr_id {
 	qc_cluster_name = 6,
 	/** ID of control program */
 	qc_control_program_id = 7,
-	/** CP absolute capping value. Scaled value where 0x10000 equals one CPU, or 0 if no capping set */
+	/** CP absolute capping value. Scaled value where 0x10000 equals to one core, or 0 if no capping set */
 	qc_cp_absolute_capping = 8,
 	/** 1 if pool's CP virtual type has capacity capping<BR> 0 if not<br>See \c DEFINE \c CPUPOOL command in [3] */
 	qc_cp_capacity_cap = 9,
-	/** Guest current capped capacity for shared virtual CPs -- scaled value where 0x10000 equals to one CPU, or 0 if no capping set */
+	/** Guest current capped capacity for shared virtual CPs -- scaled value where 0x10000 equals to one core, or 0 if no capping set */
 	qc_cp_capped_capacity = 10,
 	/** 1 if guest CP dispatch type has LIMITHARD cap.,<BR> 0 if not<br>See \c SET \c SRM command in [3] */
 	qc_cp_dispatch_limithard = 11,
@@ -314,17 +354,17 @@ enum qc_attr_id {
 	qc_cp_dispatch_type = 12,
 	/** 1 if pool's CP virtual type has limithard capping<BR> 0 if not<br>See \c DEFINE \c CPUPOOL command in [3] */
 	qc_cp_limithard_cap = 13,
-	/** CP weight-based capping value -- scaled value where 0x10000 equals one CPU, or 0 if no capping set */
+	/** CP weight-based capping value -- scaled value where 0x10000 equals to one core, or 0 if no capping set */
 	qc_cp_weight_capping = 14,
 	/** 1 if SRM hardlimit setting is consumption<BR> 0 if deadline<br>See \c SET \c SRM command in [3] */
 	qc_hardlimit_consumption = 15,
 	/** 1 if layer has multiple CPU types (e.g. CPs and IFLs),<BR> 0 if not */
 	qc_has_multiple_cpu_types = 16,
-	/** IFL absolute capping value -- scaled value where 0x10000 equals one CPU, or 0 if no capping set */
+	/** IFL absolute capping value -- scaled value where 0x10000 equals to one core, or 0 if no capping set */
 	qc_ifl_absolute_capping = 17,
 	/** 1 if pool's IFL virtual type has capacity capping<BR> 0 if not<br>See \c DEFINE \c CPUPOOL command in [3] */
 	qc_ifl_capacity_cap = 18,
-	/** Guest current capped capacity for shared virtual IFLs -- scaled value where 0x10000 equals to one CPU, or 0 if no capping set */
+	/** Guest current capped capacity for shared virtual IFLs -- scaled value where 0x10000 equals to one core, or 0 if no capping set */
 	qc_ifl_capped_capacity = 19,
 	/** 1 if guest IFL dispatch type has LIMITHARD cap.,<BR> 0 if not<br>See \c SET \c SRM command in [3] */
 	qc_ifl_dispatch_limithard = 20,
@@ -332,7 +372,7 @@ enum qc_attr_id {
 	qc_ifl_dispatch_type = 21,
 	/** 1 if pool's IFL virtual type has limithard capping<BR> 0 if not<br>See \c DEFINE \c CPUPOOL command in [3] */
 	qc_ifl_limithard_cap = 22,
-	/** IFL weight-based capping value -- scaled value where 0x10000 equals one CPU, or 0 if no capping set */
+	/** IFL weight-based capping value -- scaled value where 0x10000 equals to one core, or 0 if no capping set */
 	qc_ifl_weight_capping = 23,
 	/** Layer category, see layer tables above for details */
 	qc_layer_category = 24,
@@ -350,8 +390,12 @@ enum qc_attr_id {
 	qc_layer_uuid = 30,
 	/** Company that manufactured box */
 	qc_manufacturer = 31,
-	/** 1 if guest is eligible for mobility,<BR> 0 if not */
+	/** 1 if guest is enabled for mobility,<BR> 0 if not */
+	qc_mobility_enabled = 32,
+#ifdef CONFIG_V1_COMPATIBILITY
+	/** Deprecated, see #qc_mobility_enabled */
 	qc_mobility_eligible = 32,
+#endif
 	/** Model identifier, see \c STSI instruction in [2] */
 	qc_model = 33,
 	/** Model capacity of machine, see \c STSI instruction in [2] */
@@ -396,6 +440,22 @@ enum qc_attr_id {
 	qc_type = 53,
 	/** 1 if limithard caps uses prorated core time for capping<br> 0 if raw CPU time is used<br>See \c APAR \c VM65680 */
 	qc_prorated_core_time = 54,
+	/** Threads per CP, values >1 indicate that SMT is enabled */
+	qc_num_cp_threads = 55,
+	/** Threads per IFL, values >1 indicate that SMT is enabled */
+	qc_num_ifl_threads = 56,
+	/** Sum of all CP and IFL cores in layer */
+	qc_num_core_total = 57,
+	/** Sum of configure CP and IFL cores in layer */
+	qc_num_core_configured = 58,
+	/** Sum of standby CP and IFL cores in layer */
+	qc_num_core_standby = 59,
+	/** Sum of reserved CP and IFL cores in layer */
+	qc_num_core_reserved = 60,
+	/** Sum of dedicated CP and IFL cores in layer */
+	qc_num_core_dedicated = 61,
+	/** Sum of shared CP and IFL cores in layer */
+	qc_num_core_shared = 62,
 };
 
 

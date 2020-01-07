@@ -35,9 +35,12 @@ echo "Adding further content...";
 cd /tmp
 dump="`ls -rtd qclib-??????.dump-1 | tail -1`";
 mv ref_result.txt $dump;
-lscpu -e > $dump/lscpu.output;
-hostname > $dump/hostname.output;
+lscpu -e			> $dump/lscpu.output;
+hostname			> $dump/hostname.output;
 tgt=${dump%.*}.tgz;
+if [ -e /dev/vmcp ]; then
+	vmcp QUERY MULTITHREAD	> $dump/QUERY_MULTITHREAD.output;
+fi
 echo "Creating package...";
 tar cvfz $tgt $dump| sed -e 's/^/  /g';
 

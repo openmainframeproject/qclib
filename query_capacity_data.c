@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2017 */
+/* Copyright IBM Corp. 2013, 2018 */
 
 //_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
@@ -29,18 +29,20 @@ struct qc_cec_values {
 	char model[17];
 	char sequence_code[17];
 	char plant[5];
-	int num_cpu_total;
-	int num_cpu_configured;
-	int num_cpu_standby;
-	int num_cpu_reserved;
-	int num_cpu_dedicated;
-	int num_cpu_shared;
+	int num_core_total;
+	int num_core_configured;
+	int num_core_standby;
+	int num_core_reserved;
+	int num_core_dedicated;
+	int num_core_shared;
 	int num_cp_total;
 	int num_cp_dedicated;
 	int num_cp_shared;
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
+	int num_cp_threads;
+	int num_ifl_threads;
 	float capability;
 	float secondary_capability;
 	int capacity_adjustment_indication;
@@ -75,18 +77,20 @@ struct qc_lpar_values {
 	char layer_extended_name[257];
 	char layer_uuid[37];
 	int adjustment;
-	int num_cpu_total;
-	int num_cpu_configured;
-	int num_cpu_standby;
-	int num_cpu_reserved;
-	int num_cpu_dedicated;
-	int num_cpu_shared;
+	int num_core_total;
+	int num_core_configured;
+	int num_core_standby;
+	int num_core_reserved;
+	int num_core_dedicated;
+	int num_core_shared;
 	int num_cp_total;
 	int num_cp_dedicated;
 	int num_cp_shared;
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
+	int num_cp_threads;
+	int num_ifl_threads;
 	int cp_absolute_capping;
 	int ifl_absolute_capping;
 	int cp_weight_capping;
@@ -118,15 +122,17 @@ struct qc_zvm_hypervisor_values {
 	int adjustment;
 	int hardlimit_consumption;
 	int prorated_core_time;
-	int num_cpu_total;
-	int num_cpu_dedicated;
-	int num_cpu_shared;
+	int num_core_total;
+	int num_core_dedicated;
+	int num_core_shared;
 	int num_cp_total;
 	int num_cp_dedicated;
 	int num_cp_shared;
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
+	int num_cp_threads;
+	int num_ifl_threads;
 };
 
 struct qc_zvm_guest_values {
@@ -153,7 +159,7 @@ struct qc_zvm_guest_values {
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
-	int mobility_eligible;
+	int mobility_enabled;
 	int has_multiple_cpu_types;
 	int cp_dispatch_limithard;
 	int cp_dispatch_type;
@@ -170,9 +176,9 @@ struct qc_kvm_hypervisor_values {
 	char layer_category[QC_LAYER_CAT_LEN];
 	char control_program_id[17];
 	int adjustment;
-	int num_cpu_total;
-	int num_cpu_dedicated;
-	int num_cpu_shared;
+	int num_core_total;
+	int num_core_dedicated;
+	int num_core_shared;
 	int num_cp_total;
 	int num_cp_dedicated;
 	int num_cp_shared;
@@ -225,18 +231,20 @@ static struct qc_attr cec_attrs[]  =  {
 	{qc_model, string, offsetof(struct qc_cec_values, model)},
 	{qc_sequence_code, string, offsetof(struct qc_cec_values, sequence_code)},
 	{qc_plant, string, offsetof(struct qc_cec_values, plant)},
-	{qc_num_cpu_total, integer, offsetof(struct qc_cec_values, num_cpu_total)},
-	{qc_num_cpu_configured, integer, offsetof(struct qc_cec_values, num_cpu_configured)},
-	{qc_num_cpu_standby, integer, offsetof(struct qc_cec_values, num_cpu_standby)},
-	{qc_num_cpu_reserved, integer, offsetof(struct qc_cec_values, num_cpu_reserved)},
-	{qc_num_cpu_dedicated, integer, offsetof(struct qc_cec_values, num_cpu_dedicated)},
-	{qc_num_cpu_shared, integer, offsetof(struct qc_cec_values, num_cpu_shared)},
+	{qc_num_core_total, integer, offsetof(struct qc_cec_values, num_core_total)},
+	{qc_num_core_configured, integer, offsetof(struct qc_cec_values, num_core_configured)},
+	{qc_num_core_standby, integer, offsetof(struct qc_cec_values, num_core_standby)},
+	{qc_num_core_reserved, integer, offsetof(struct qc_cec_values, num_core_reserved)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_cec_values, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_cec_values, num_core_shared)},
 	{qc_num_cp_total, integer, offsetof(struct qc_cec_values, num_cp_total)},
 	{qc_num_cp_dedicated, integer, offsetof(struct qc_cec_values, num_cp_dedicated)},
 	{qc_num_cp_shared, integer, offsetof(struct qc_cec_values, num_cp_shared)},
 	{qc_num_ifl_total, integer, offsetof(struct qc_cec_values, num_ifl_total)},
 	{qc_num_ifl_dedicated, integer, offsetof(struct qc_cec_values, num_ifl_dedicated)},
 	{qc_num_ifl_shared, integer, offsetof(struct qc_cec_values, num_ifl_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_cec_values, num_cp_threads)},
+	{qc_num_ifl_threads, integer, offsetof(struct qc_cec_values, num_ifl_threads)},
 	{qc_capability, floatingpoint, offsetof(struct qc_cec_values, capability)},
 	{qc_secondary_capability, floatingpoint, offsetof(struct qc_cec_values, secondary_capability)},
 	{qc_capacity_adjustment_indication, integer, offsetof(struct qc_cec_values, capacity_adjustment_indication)},
@@ -267,18 +275,20 @@ static struct qc_attr lpar_attrs[] = {
 	{qc_layer_extended_name, string, offsetof(struct qc_lpar_values, layer_extended_name)},
 	{qc_layer_uuid, string, offsetof(struct qc_lpar_values, layer_uuid)},
 	{qc_adjustment, integer, offsetof(struct qc_lpar_values, adjustment)},
-	{qc_num_cpu_total, integer, offsetof(struct qc_lpar_values, num_cpu_total)},
-	{qc_num_cpu_configured, integer, offsetof(struct qc_lpar_values, num_cpu_configured)},
-	{qc_num_cpu_standby, integer, offsetof(struct qc_lpar_values, num_cpu_standby)},
-	{qc_num_cpu_reserved, integer, offsetof(struct qc_lpar_values, num_cpu_reserved)},
-	{qc_num_cpu_dedicated, integer, offsetof(struct qc_lpar_values, num_cpu_dedicated)},
-	{qc_num_cpu_shared, integer, offsetof(struct qc_lpar_values, num_cpu_shared)},
+	{qc_num_core_total, integer, offsetof(struct qc_lpar_values, num_core_total)},
+	{qc_num_core_configured, integer, offsetof(struct qc_lpar_values, num_core_configured)},
+	{qc_num_core_standby, integer, offsetof(struct qc_lpar_values, num_core_standby)},
+	{qc_num_core_reserved, integer, offsetof(struct qc_lpar_values, num_core_reserved)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_lpar_values, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_lpar_values, num_core_shared)},
 	{qc_num_cp_total, integer, offsetof(struct qc_lpar_values, num_cp_total)},
 	{qc_num_cp_dedicated, integer, offsetof(struct qc_lpar_values, num_cp_dedicated)},
 	{qc_num_cp_shared, integer, offsetof(struct qc_lpar_values, num_cp_shared)},
 	{qc_num_ifl_total, integer, offsetof(struct qc_lpar_values, num_ifl_total)},
 	{qc_num_ifl_dedicated, integer, offsetof(struct qc_lpar_values, num_ifl_dedicated)},
 	{qc_num_ifl_shared, integer, offsetof(struct qc_lpar_values, num_ifl_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_lpar_values, num_cp_threads)},
+	{qc_num_ifl_threads, integer, offsetof(struct qc_lpar_values, num_ifl_threads)},
 	{qc_cp_absolute_capping, integer, offsetof(struct qc_lpar_values, cp_absolute_capping)},
 	{qc_ifl_absolute_capping, integer, offsetof(struct qc_lpar_values, ifl_absolute_capping)},
 	{qc_cp_weight_capping, integer, offsetof(struct qc_lpar_values, cp_weight_capping)},
@@ -297,15 +307,17 @@ static struct qc_attr zvm_hv_attrs[] = {
 	{qc_adjustment, integer, offsetof(struct qc_zvm_hypervisor_values, adjustment)},
 	{qc_hardlimit_consumption, integer, offsetof(struct qc_zvm_hypervisor_values, hardlimit_consumption)},
 	{qc_prorated_core_time, integer, offsetof(struct qc_zvm_hypervisor_values, prorated_core_time)},
-	{qc_num_cpu_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_cpu_total)},
-	{qc_num_cpu_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_cpu_dedicated)},
-	{qc_num_cpu_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_cpu_shared)},
+	{qc_num_core_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_core_total)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_core_shared)},
 	{qc_num_cp_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_total)},
 	{qc_num_cp_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_dedicated)},
 	{qc_num_cp_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_shared)},
 	{qc_num_ifl_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_total)},
 	{qc_num_ifl_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_dedicated)},
 	{qc_num_ifl_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_threads)},
+	{qc_num_ifl_threads, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_threads)},
 	{-1, string, -1}
 };
 
@@ -316,9 +328,9 @@ static struct qc_attr kvm_hv_attrs[] = {
 	{qc_layer_category, string, offsetof(struct qc_kvm_hypervisor_values, layer_category)},
 	{qc_control_program_id, string, offsetof(struct qc_kvm_hypervisor_values, control_program_id)},
 	{qc_adjustment, integer, offsetof(struct qc_kvm_hypervisor_values, adjustment)},
-	{qc_num_cpu_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_cpu_total)},
-	{qc_num_cpu_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_cpu_dedicated)},
-	{qc_num_cpu_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_cpu_shared)},
+	{qc_num_core_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_core_total)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_core_shared)},
 	{qc_num_cp_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_total)},
 	{qc_num_cp_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_dedicated)},
 	{qc_num_cp_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_shared)},
@@ -363,7 +375,7 @@ static struct qc_attr zvm_guest_attrs[] = {
 	{qc_num_ifl_total, integer, offsetof(struct qc_zvm_guest_values, num_ifl_total)},
 	{qc_num_ifl_dedicated, integer, offsetof(struct qc_zvm_guest_values, num_ifl_dedicated)},
 	{qc_num_ifl_shared, integer, offsetof(struct qc_zvm_guest_values, num_ifl_shared)},
-	{qc_mobility_eligible, integer, offsetof(struct qc_zvm_guest_values, mobility_eligible)},
+	{qc_mobility_enabled, integer, offsetof(struct qc_zvm_guest_values, mobility_enabled)},
 	{qc_has_multiple_cpu_types, integer, offsetof(struct qc_zvm_guest_values, has_multiple_cpu_types)},
 	{qc_cp_dispatch_limithard, integer, offsetof(struct qc_zvm_guest_values, cp_dispatch_limithard)},
 	{qc_cp_capped_capacity, integer, offsetof(struct qc_zvm_guest_values, cp_capped_capacity)},
@@ -445,7 +457,7 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_ifl_capacity_cap: return "pool_ifl_capacity_cap";
 	case qc_capping: return "capping";
 	case qc_capping_num: return "capping_num";
-	case qc_mobility_eligible: return "mobility_eligible";
+	case qc_mobility_enabled: return "mobility_enabled";
 	case qc_has_multiple_cpu_types: return "has_multiple_cpu_types";
 	case qc_cp_dispatch_limithard: return "cp_dispatch_limithard";
 	case qc_ifl_dispatch_limithard: return "ifl_dispatch_limithard";
@@ -453,6 +465,14 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_ifl_dispatch_type: return "ifl_dispatch_type";
 	case qc_cp_capped_capacity: return "cp_capped_capacity";
 	case qc_ifl_capped_capacity: return "ifl_capped_capacity";
+	case qc_num_cp_threads: return "num_cp_threads";
+	case qc_num_ifl_threads: return "num_ifl_threads";
+	case qc_num_core_total: return "num_core_total";
+	case qc_num_core_configured: return "num_core_configured";
+	case qc_num_core_standby: return "num_core_standby";
+	case qc_num_core_reserved: return "num_core_reserved";
+	case qc_num_core_dedicated: return "num_core_dedicated";
+	case qc_num_core_shared: return "num_core_shared";
 	default: break;
 	}
 	qc_debug(hdl, "Error: Cannot convert unknown attribute '%d' to char*\n", id);
@@ -497,12 +517,16 @@ int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no
 		layer_category = "HOST";
 		layer_type = "z/VM-hypervisor";
 		break;
-	case QC_LAYER_TYPE_ZVM_CPU_POOL:
+	case QC_LAYER_TYPE_ZVM_RESOURCE_POOL:
 		layer_sz = sizeof(struct qc_zvm_pool_values);
 		attrs = zvm_pool_attrs;
 		layer_category_num = QC_LAYER_CAT_POOL;
 		layer_category = "POOL";
+#ifdef CONFIG_V1_COMPATIBILITY
 		layer_type = "z/VM-CPU-pool";
+#else
+		layer_type = "z/VM-resource-pool";
+#endif
 		break;
 	case QC_LAYER_TYPE_ZVM_GUEST:
 		layer_sz = sizeof(struct qc_zvm_guest_values);
@@ -607,6 +631,37 @@ int qc_append_handle(struct qc_handle *hdl, struct qc_handle **appended_hdl, int
 	return 0;
 }
 
+#ifdef CONFIG_V1_COMPATIBILITY
+/* Maps qc_num_cpu_* to qc_num_core_* attributes where required to preserve backwards compatibility.
+ * Should be removed in a qclib v2.0 release. */
+static enum qc_attr_id preserve_v1_attr_compatibility(struct qc_handle *hdl, enum qc_attr_id id) {
+	if (id != qc_layer_type_num) {
+		int *layer_type = qc_get_attr_value_int(hdl, qc_layer_type_num);
+		switch (*layer_type) {
+		case QC_LAYER_TYPE_CEC:
+		case QC_LAYER_TYPE_LPAR:
+			switch (id) {
+			case qc_num_cpu_configured: return qc_num_core_configured;
+			case qc_num_cpu_standby: return qc_num_core_standby;
+			case qc_num_cpu_reserved: return qc_num_core_reserved;
+			default: break;
+			}
+			// fallthrough
+		case QC_LAYER_TYPE_ZVM_HYPERVISOR:
+		case QC_LAYER_TYPE_KVM_HYPERVISOR:
+			switch (id) {
+			case qc_num_cpu_total: return qc_num_core_total;
+			case qc_num_cpu_dedicated: return qc_num_core_dedicated;
+			case qc_num_cpu_shared: return qc_num_core_shared;
+			default: break;
+			}
+		}
+	}
+
+	return id;
+}
+#endif
+
 // Indicates the attribute as 'set', returning a ptr to its content
 static char *qc_set_attr(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type, char src, int *prev_set) {
 	struct qc_attr *attr_list = hdl->attr_list;
@@ -627,14 +682,26 @@ static char *qc_set_attr(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data
 
 // Sets attribute 'id' in layer as pointed to by 'hdl'
 int qc_set_attr_int(struct qc_handle *hdl, enum qc_attr_id id, int val, char src) {
+	char orig_src = qc_get_attr_value_src_int(hdl, id);
 	int *ptr, prev_set;
 
+#ifdef CONFIG_V1_COMPATIBILITY
+	id = preserve_v1_attr_compatibility(hdl, id);
+#endif
 	if ((ptr = (int *)qc_set_attr(hdl, id, integer, src, &prev_set)) == NULL)
 		return -1;
 	if (qc_consistency_check_requested && prev_set && *ptr != val) {
-		qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %d from %c, try to set to %d from %c\n",
-			hdl->layer_no, qc_attr_id_to_char(hdl, id), *ptr, qc_get_attr_value_src_int(hdl, id), val, src);
-		return -2;
+#ifdef CONFIG_TEXTUAL_HYPFS
+		int *layer_type = qc_get_attr_value_int(hdl, qc_layer_type_num);
+		// Affects ids qc_num_cp_total and qc_num_ifl_total only
+		if (orig_src != ATTR_SRC_HYPFS || *layer_type != QC_LAYER_TYPE_LPAR) {
+#endif
+			qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %d from %c, try to set to %d from %c\n",
+				 hdl->layer_no, qc_attr_id_to_char(hdl, id), *ptr, orig_src, val, src);
+				return -2;
+#ifdef CONFIG_TEXTUAL_HYPFS
+		}
+#endif
 	}
 	*ptr = val;
 
@@ -643,6 +710,7 @@ int qc_set_attr_int(struct qc_handle *hdl, enum qc_attr_id id, int val, char src
 
 // Sets attribute 'id' in layer as pointed to by 'hdl'
 int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char src) {
+	char orig_src = qc_get_attr_value_src_int(hdl, id);
 	int prev_set;
 	float *ptr;
 
@@ -650,7 +718,7 @@ int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char
 		return -1;
 	if (qc_consistency_check_requested && prev_set && *ptr != val) {
 		qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %f from %c, try to set to %f from %c\n",
-			 hdl->layer_no, qc_attr_id_to_char(hdl, id), *ptr, qc_get_attr_value_src_int(hdl, id), val, src);
+			 hdl->layer_no, qc_attr_id_to_char(hdl, id), *ptr, orig_src, val, src);
 		return -2;
 	}
 	*ptr = val;
@@ -661,6 +729,7 @@ int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char
 // Sets string attribute 'id' in layer as pointed to by 'hdl', stripping trailing blanks, but
 // leaving the original string unmodified
 int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *str, unsigned int str_len, char src) {
+	char orig_src = qc_get_attr_value_src_int(hdl, id);
 	char *ptr, *tmp, *s;
 	int prev_set;
 
@@ -675,7 +744,7 @@ int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *st
 			*s = '\0';
 		if (strcmp(ptr, tmp)) {
 			qc_debug(hdl, "Error: Consistency at layer %d: Attr %s had value %s from %c, try to set to %s from %c\n",
-				hdl->layer_no, qc_attr_id_to_char(hdl, id), ptr, qc_get_attr_value_src_int(hdl, id), tmp, src);
+				hdl->layer_no, qc_attr_id_to_char(hdl, id), ptr, orig_src, tmp, src);
 			free(tmp);
 			return -3;
 		}
@@ -718,7 +787,7 @@ int qc_is_nonempty_ebcdic(__u64 *str) {
 	return *str != 0x0 && *str != 0x4040404040404040ULL;
 }
 
-// Sets attribute 'id' in layer as pointed to by 'hdl'
+// Returns whether attribute 'id' in layer as pointed to by 'hdl' is set/defined
 static int qc_is_attr_set(struct qc_handle *hdl, enum qc_attr_id id, enum qc_data_type type) {
 	struct qc_attr *attr_list = hdl->attr_list;
 	int count = 0;
@@ -782,6 +851,9 @@ static void *qc_get_attr_value(struct qc_handle *hdl, enum qc_attr_id id, enum q
 }
 
 int *qc_get_attr_value_int(struct qc_handle *hdl, enum qc_attr_id id) {
+#ifdef CONFIG_V1_COMPATIBILITY
+	id = preserve_v1_attr_compatibility(hdl, id);
+#endif
 	return (int *)qc_get_attr_value(hdl, id, integer);
 }
 
@@ -803,6 +875,9 @@ static char qc_get_attr_value_src(struct qc_handle *hdl, enum qc_attr_id id, enu
 }
 
 char qc_get_attr_value_src_int(struct qc_handle *hdl, enum qc_attr_id id) {
+#ifdef CONFIG_V1_COMPATIBILITY
+	id = preserve_v1_attr_compatibility(hdl, id);
+#endif
 	return qc_get_attr_value_src(hdl, id, integer);
 }
 

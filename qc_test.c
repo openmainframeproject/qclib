@@ -74,7 +74,7 @@ const char *attr2char(enum qc_attr_id id) {
 	case qc_ifl_capacity_cap: return "qc_ifl_capacity_cap";
 	case qc_capping: return "qc_capping";
 	case qc_capping_num: return "qc_capping_num";
-	case qc_mobility_eligible: return "qc_mobility_eligible";
+	case qc_mobility_enabled: return "qc_mobility_enabled";
 	case qc_has_multiple_cpu_types: return "qc_has_multiple_cpu_types";
 	case qc_cp_dispatch_limithard: return "qc_cp_dispatch_limithard";
 	case qc_ifl_dispatch_limithard: return "qc_ifl_dispatch_limithard";
@@ -82,6 +82,15 @@ const char *attr2char(enum qc_attr_id id) {
 	case qc_ifl_dispatch_type: return "qc_ifl_dispatch_type";
 	case qc_cp_capped_capacity: return "qc_cp_capped_capacity";
 	case qc_ifl_capped_capacity: return "qc_ifl_capped_capacity";
+	case qc_num_cp_threads: return "qc_num_cp_threads";
+	case qc_num_ifl_threads: return "qc_num_ifl_threads";
+	case qc_num_core_total: return "qc_num_core_total";
+	case qc_num_core_configured: return "qc_num_core_configured";
+	case qc_num_core_standby: return "qc_num_core_standby";
+	case qc_num_core_reserved: return "qc_num_core_reserved";
+	case qc_num_core_dedicated: return "qc_num_core_dedicated";
+	case qc_num_core_shared: return "qc_num_core_shared";
+
 	default: break;
 	}
 
@@ -463,12 +472,12 @@ void print_cec_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_plant, "S V", layer, indent);
 
 	print_break();
-	print_int_attr(hdl, qc_num_cpu_total, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_configured, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_standby, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_reserved, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_dedicated, " hV", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_shared, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_core_total, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_configured, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_standby, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_reserved, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_dedicated, " hV", layer, indent);
+	print_int_attr(hdl, qc_num_core_shared, " hV", layer, indent);
 
 	print_break();
 	print_int_attr(hdl, qc_num_cp_total, " HV", layer, indent);
@@ -481,6 +490,8 @@ void print_cec_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_num_ifl_shared, " hV", layer, indent);
 
 	print_break();
+	print_int_attr(hdl, qc_num_cp_threads, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_threads, "S  ", layer, indent);
 	print_float_attr(hdl, qc_capability, "S  ", layer, indent);
 	print_float_attr(hdl, qc_secondary_capability, "S  ", layer, indent);
 
@@ -523,12 +534,12 @@ void print_lpar_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_adjustment, "S  ", layer, indent);
 
 	print_break();
-	print_int_attr(hdl, qc_num_cpu_total, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_configured, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_standby, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_reserved, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_dedicated, "S  ", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_shared, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_total, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_configured, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_standby, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_reserved, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_dedicated, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_core_shared, "S  ", layer, indent);
 
 	print_break();
 	print_int_attr(hdl, qc_num_cp_total, " HV", layer, indent);
@@ -541,6 +552,8 @@ void print_lpar_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_num_ifl_shared, " hV", layer, indent);
 
 	print_break();
+	print_int_attr(hdl, qc_num_cp_threads, "S  ", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_threads, "S  ", layer, indent);
 	print_int_attr(hdl, qc_cp_absolute_capping, " hV", layer, indent);
 	print_int_attr(hdl, qc_cp_weight_capping, " hV", layer, indent);
 	print_int_attr(hdl, qc_ifl_absolute_capping, " hV", layer, indent);
@@ -565,22 +578,28 @@ void print_zvmhyp_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_prorated_core_time, "  V", layer, indent);
 
 	print_break();
-	print_int_attr(hdl, qc_num_cpu_total, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_dedicated, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_shared, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_core_total, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_core_dedicated, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_core_shared, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cp_total, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cp_dedicated, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_cp_shared, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_ifl_total, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_ifl_dedicated, "  V", layer, indent);
 	print_int_attr(hdl, qc_num_ifl_shared, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_cp_threads, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_ifl_threads, "  V", layer, indent);
 
 	// check an attribute that only exists at a different layer
 	verify_nonexistence(hdl, qc_cp_absolute_capping, layer);
 }
 
 void print_zvmpool_information(void *hdl, int layer, int indent) {
+#ifdef CONFIG_V1_COMPATIBILITY
 	print_header(indent, layer, "z/VM-CPU-pool");
+#else
+	print_header(indent, layer, "z/VM-resource-pool");
+#endif
 	indent += 2;
 	print_string_attr(hdl, qc_layer_type, "n/a", layer, indent);
 	print_string_attr(hdl, qc_layer_category, "n/a", layer, indent);
@@ -630,7 +649,7 @@ void print_zvmguest_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_num_ifl_shared, "  V", layer, indent);
 
 	print_break();
-	print_int_attr(hdl, qc_mobility_eligible, "  V", layer, indent);
+	print_int_attr(hdl, qc_mobility_enabled, "  V", layer, indent);
 	print_int_attr(hdl, qc_has_multiple_cpu_types, "  V", layer, indent);
 	print_int_attr(hdl, qc_cp_dispatch_type, "  V", layer, indent);
 	print_int_attr(hdl, qc_cp_dispatch_limithard, "  V", layer, indent);
@@ -654,9 +673,9 @@ void print_kvmhyp_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_adjustment, "S  ", layer, indent);
 
 	print_break();
-	print_int_attr(hdl, qc_num_cpu_total, "  V", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_dedicated, "SHV", layer, indent);
-	print_int_attr(hdl, qc_num_cpu_shared, "SHV", layer, indent);
+	print_int_attr(hdl, qc_num_core_total, "  V", layer, indent);
+	print_int_attr(hdl, qc_num_core_dedicated, "SHV", layer, indent);
+	print_int_attr(hdl, qc_num_core_shared, "SHV", layer, indent);
 	print_int_attr(hdl, qc_num_cp_total, " HV", layer, indent);
 	print_int_attr(hdl, qc_num_cp_dedicated, " hV", layer, indent);
 	print_int_attr(hdl, qc_num_cp_shared, " hV", layer, indent);
