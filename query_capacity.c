@@ -112,7 +112,7 @@ static int qc_debug_file_init(void) {
 				goto out_err;
 			}
 		}
-		qc_debug(NULL, "This is qclib v1.4.0, level 25f7956, date 2018-04-01 17:44:33 +0200\n");
+		qc_debug(NULL, "This is qclib v1.4.1, level 9244c6d, date 2018-06-23 13:59:05 +0200\n");
 	}
 
 	return 0;

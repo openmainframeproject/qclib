@@ -26,8 +26,7 @@ echo "Executing $qctest...";
 QC_DEBUG=2 $qctest >/tmp/ref_result.txt;
 
 if [ $? -ne 0 ]; then
-	echo "Error: $qctest failed";
-	exit 3;
+	echo "$qctest failed - good thing we're creating a dump";
 fi
 
 

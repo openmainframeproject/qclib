@@ -94,6 +94,12 @@ For enhancements, please describe the proposed change and its benefits.
 Release History:
 ================
 
+1.4.1
+    Bug fixes:
+    - qc_dump: Don't abort the dump in case qc_test fails.
+    - Attributes qc_cp_weight_capping and qc_ifl_weight_capping were set even
+      when initial capping was not set in the LPAR's activation profile.
+
 1.4.0
     Changes:
     - Added SMT support by properly differentiating between cores and CPUs.

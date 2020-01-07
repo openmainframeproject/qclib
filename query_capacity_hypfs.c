@@ -23,6 +23,7 @@
 #define QC_FLAG_PHYS		0x80
 #define QC_CPU_DEDICATED	0xffff
 #define QC_CPU_CONFIGURED	0x20
+#define QC_CPU_CAPPED		0x40
 
 #define HYPFS_NA		0
 #ifdef CONFIG_TEXTUAL_HYPFS
@@ -371,6 +372,7 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 	struct dfs_sys_hdr *sys_hdr, *tgt_lpar;
 	struct dfs_cpu_info *cpu;
 	struct qc_handle *group;
+	int cap_active = 0;
 
 	qc_debug(hdl, "Add LPAR values from binary hypfs API\n");
 	qc_debug_indent_inc();
@@ -385,6 +387,8 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 		for (j = 0; j < sys_hdr->rcpus; ++j, ++cpu) {
 			if (!(cpu->cflag & QC_CPU_CONFIGURED))
 				continue;
+			if (sys_hdr == tgt_lpar && cpu->cflag & QC_CPU_CAPPED)
+				cap_active = 1;
 			switch (cpu->ctidx) {
 			case QC_CPU_TYPE_CP:
 				if (sys_hdr == tgt_lpar) {
@@ -436,7 +440,7 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 	if (gpd_available) {
 		cp_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_cp_shared);
 		ifl_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_ifl_shared);
-		if (cp_sh && ifl_sh &&
+		if (cap_active && cp_sh && ifl_sh &&
 		    (qc_set_attr_int(hdl, qc_cp_weight_capping, cp_weight ? *cp_sh * 0x10000 * cp_weight / cp_all_weight : 0, ATTR_SRC_HYPFS) ||
 		     qc_set_attr_int(hdl, qc_ifl_weight_capping, ifl_weight ? *ifl_sh * 0x10000 * ifl_weight / ifl_all_weight : 0, ATTR_SRC_HYPFS)))
 			goto out_err;
