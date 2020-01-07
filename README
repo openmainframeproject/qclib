@@ -1,0 +1,152 @@
+                      qclib (Query Capacity Library)
+                      ==============================
+
+qclib provides a C API for extraction of system information for Linux on z
+Systems.
+
+For instance, it will provide the number of CPUs
+  * on the machine (CEC, Central Electronic Complex) layer
+  * on the PR/SM (Processor Resource/Systems Manager) layer, i.e. visible to
+    LPARs
+  * in z/VM hosts, guests and CPU pools
+  * in KVM hosts and guests
+This allows calculating the upper limit of CPU resources a highest level guest
+can use.
+E.g.: If an LPAR on a z13 provides 4 CPUs to a z/VM hypervisor, and the
+hypervisor provides 8 virtual CPUs to a guest, qclib can be used to retrieve
+all of these numbers, and it can be concluded that not more capacity than 4
+CPUs can be used by the software running in the guest.
+
+qclib uses various interfaces and provides this data through a common and
+consistent API (Application Programming Interface), using information provided
+by:
+  * STSI (Store System Information) instruction - for more details, refer to
+    the z/Architecture Principles of Operation (SA22-7832)
+  * STHYI (Store Hypervisor Information) instruction as provided by a z/VM
+    hypervisor - for more information, refer to z/VM: V6R3 CP Programming
+    Service (SC24-6179), chapter 'Store Hypervisor Information (STHYI)
+    Instruction'.
+  * hypfs file system - for more information, refer to 'Device Drivers,
+    Features, and Commands', chapter 'S/390 hypervisor file system'.
+
+Please refer to:
+   http://www.ibm.com/developerworks/linux/linux390/qclib.html
+for the latest available version.
+
+
+Usage
+=====
+See query_capacity.h for details on how to use the API, and qc_test.c for a
+sample program.
+
+
+Requirements
+============
+See query_capacity.h for details.
+
+
+Build
+=====
+Use the following 'make' targets:
+  * 'all' (default): Build static and dynamic libraries, as well as respective
+               sample programs 'qc_test' (statically linked) and 'qc_test-sh'
+               (dynamically linked).
+  * 'test': Build and run the statically linked test program qc_test.
+  * 'test-sh': Build and run the dynamically linked test program qc_test.
+
+
+API Documentation
+=================
+All documentation is available in file query_capacity.h.
+If you have doxygen 1.8.0 (or higher) installed you will find the
+documentation in subdirectory html, after using 'make doc'.
+
+
+License
+=======
+See enclosed file LICENSE for details.
+
+
+Bug Reports
+===========
+
+Send bug reports to linux390@de.ibm.com.
+
+
+Code Contributions
+==================
+Code contributions will not be accepted for qclib.
+Therefore, please do not send DIFFs or code-snippets. Thank you!
+If you want to report bugs or suggest enhancements, please contact:
+   linux390@de.ibm.com
+and put "[qclib]" as the first word in the subject line of your mail.
+For bug reports, always attach a log file and a dump (see QC_DEBUG as
+described in query_capacity.h), and describe the scenario in which you
+observed the bug, so that the problem can be reproduced.
+For enhancements, please describe the proposed change and its benefits.
+
+
+Release History:
+================
+
+1.0.0
+    Changes:
+    - Introduced new API, replacing the previous one
+    - Renamed the following attributes for consistency:
+        * qc_container_name became qc_layer_name
+        * qc_entity_* became qc_layer_*
+    - Introduced the following new attributes for a numeric representation
+      of the respective string attributes:
+        * qc_layer_type_num      (alternative to qc_layer_type)
+        * qc_layer_category_num  (alternative to qc_layer_category)
+        * qc_partition_char_num  (alternative to qc_partition_char)
+        * qc_capping_num         (alternative to qc_capping)
+    - Removed/renamed the following attributes, since they were duplicates of
+      other layers' content:
+        * In layer type QC_LAYER_TYPE_ZVM_GUEST: Removed qc_hyp_*, qc_pool_*
+          qc_system_identifier, qc_cluster_name, qc_control_program_id,
+          qc_adjustment, and qc_hardlimit_consumption
+        * In layer type QC_LAYER_TYPE_ZVM_CPU_POOL: Removed qc_hyp_*,
+          qc_system_identifier, qc_cluster_name, qc_hardlimit_consumption, and
+          renamed qc_pool_* to qc_*
+    - Added support for KVM hypervisor
+    - Added logging facility
+    - Added dump support: Capability to create and run on dumps
+    - Added autodump support: Create dumps on errors only
+    - Added doxygen support for API description in query_capacity.h
+    - Added support for hypfs mounted at arbitrary locations
+    - Added support for binary hypfs API (requires RHEL6.1 and SLES11.2 or
+      higher)
+    - Added detection of Live Guest Migration while retrieving data
+    - Handled NULL pointer arguments in all API calls
+    - Reported errors as such when occuring while searching for capacity
+      information
+
+    Bug fixes:
+    - Handled file access errors
+    - Enabled attributes that were incorrectly indicated as not present
+    - Fixed qc_get_num_layers() to return the number of layers (as documented),
+      not the highest index
+    - Fixed race by reading /proc/sysinfo only once
+    - Only set qc_ifl_dispatch_type in presence of IFLs (as intended)
+
+0.9.2
+    Bug fixes:
+    - Fixed memory leaks
+
+0.9.1
+    Bug fixes:
+    - Fixed crash with more than 1 layers of nested z/VM virtualization
+    - Fixed crash on 1st layer z/VM systems with hypfs
+    - Fix: Information from /proc/sysinfo was collected in wrong sequence
+           with more than 1 layers of nested virtualization
+    - Fixed left open file handles in hypfs parsing code.
+    - Added consistency check for hypfs
+
+0.9.0
+    Initial version
+
+
+
+
+Copyright IBM Corp. 2013, 2015
