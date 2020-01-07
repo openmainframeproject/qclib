@@ -1,12 +1,12 @@
-# Copyright IBM Corp. 2013, 2015
+# Copyright IBM Corp. 2013, 2017
 
 # Versioning scheme: major.minor.bugfix
 #     major : Backwards compatible changes to the API
 #     minor : Additions leaving the API unmodified
 #     bugfix: Bugfixes only
-VERM    = 1
-VERSION = $(VERM).2.0
-CFLAGS  = -g -Wall -O2
+VERSION = 1.3.0
+VERM    = $(shell echo $(VERSION) | cut -d '.' -f 1)
+CFLAGS ?= -g -Wall -O2
 CFILES  = query_capacity.c query_capacity_data.c query_capacity_sysinfo.c query_capacity_ocf.c \
           query_capacity_hypfs.c query_capacity_sthyi.c
 OBJECTS = $(patsubst %.c,%.o,$(CFILES))
@@ -37,7 +37,9 @@ libqc.a: $(OBJECTS)
 	$(AR) rcs $@ $^
 
 libqc.so.$(VERSION): $(OBJECTS)
-	$(LINK) -shared $^ -o $@
+	$(LINK) -Wl,-soname,libqc.so.$(VERM) -shared $^ -o $@
+	-rm libqc.so.$(VERM) 2>/dev/null
+	ln -s libqc.so.$(VERSION) libqc.so.$(VERM)
 
 qc_test: qc_test.c libqc.a
 	$(CC) $(CFLAGS) -static $< -L. -lqc -o $@
@@ -81,4 +83,4 @@ installdoc: doc
 clean:
 	echo "  CLEAN"
 	rm -f $(OBJECTS) libqc.a libqc.so.$(VERSION) qc_test qc_test-sh hcpinfbk_qclib.h
-	rm -rf html
+	rm -rf html libqc.so.$(VERM)

@@ -1,13 +1,14 @@
-/* Copyright IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
 
-#include <signal.h>
 #include <iconv.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <endian.h>
+#include <linux/types.h>
+#include <sys/auxv.h>
 
 #include "query_capacity_int.h"
 #include "query_capacity_data.h"
@@ -32,43 +33,37 @@ struct sthyi_priv {
 	int 	avail;
 };
 
-#if defined __s390x__ || __s390__
-static void qc_stfle_signal_handler(int signal) {
-	qc_debug(NULL, "Signal handler invoked with signal %d\n", signal);
-
-	return;
-}
-#endif
-
-static int qc_is_sthyi_available(void) {
-#if defined __s390x__ || __s390__
-	/* initialize for signal handler case */
+#if defined __s390__
+static int qc_is_sthyi_facility_available() {
 	unsigned long long stfle_buffer[(STHYI_FACILITY_BIT/64)+1] __attribute__ ((aligned (8))) = { 0,};
-	sighandler_t old_handler;
-
-	/* we assume STFLE is available, cannot check, since we are
-	 * in problem state and /proc/cpuinfo features might not be present.
-	 * Therefore set up signal handler to ignore illegal instructions
-	 * on older machines */
-	old_handler = signal(SIGILL, qc_stfle_signal_handler);
 	{
 		register unsigned long reg0 asm("0") = STHYI_FACILITY_BIT/64 ;
 		asm volatile (".insn s,0xb2b00000,%0"
 			      : "=m" (stfle_buffer), "+d" (reg0) :
 			      : "cc", "memory");
 	}
-	signal(SIGILL, old_handler);
 
 	return (stfle_buffer[STHYI_FACILITY_BIT/64] >> (63 - (STHYI_FACILITY_BIT%64))) & 1;
-#else
-	return 0;
+}
 #endif
+
+static int qc_is_sthyi_available_vm(struct qc_handle *hdl) {
+#if defined __s390__
+	unsigned long aux = getauxval(AT_HWCAP);
+
+	if (aux & HWCAP_S390_STFLE)
+		return qc_is_sthyi_facility_available();
+	else
+		qc_debug(hdl, "STFLE not available\n");
+#endif
+
+	return 0;
 }
 
-static int qc_sthyi(char *sthyi_buffer) {
-#if defined __s390x__ || __s390__
+static int qc_sthyi_vm(struct sthyi_priv *priv) {
+#if defined __s390__
 	register unsigned long function_code asm("2") = 0;
-	register unsigned long buffer asm("4") = (unsigned long) sthyi_buffer;
+	register unsigned long buffer asm("4") = (unsigned long) priv->data;
 	register unsigned long return_code asm("5");
 	int cc = -1;
 
@@ -78,17 +73,39 @@ static int qc_sthyi(char *sthyi_buffer) {
 		      : "=d" (cc), "=d" (return_code)
 		      : "d" (function_code), "d" (buffer)
 		      : "memory", "cc");
-	if (cc == 0) {
-		/* buffer was updated */
+	if (cc == 3 && return_code == 4)
 		return 1;
-	}
-	/* if cc==-1: exception. never mind, return 0 */
-	/* if cc==3: never mind, r carries return code */
+	if (cc == 0)
+		/* buffer was updated */
+		priv->avail = STHYI_AVAILABLE;
 #endif
 
 	return 0;
 }
 
+static int qc_sthyi_lpar(struct qc_handle *hdl, struct sthyi_priv *priv) {
+#if defined __s390__
+	uint64_t cc;
+	long sthyi = 380;
+
+#ifdef __NR_s390_sthyi
+	sthyi = __NR_s390_sthyi
+#endif
+	qc_debug(hdl, "Try STHYI@LPAR\n");
+	if (syscall(sthyi, 0, priv->data, &cc, 0) || cc) {
+		if (errno == ENOSYS) {
+			qc_debug(hdl, "STHYI@LPAR is not available\n");
+			return 0;
+		}
+		qc_debug(hdl, "Error: STHYI@LPAR execution failed: errno='%s', cc=%" PRIu64 "\n", strerror(errno), cc);
+		return -1;
+	}
+	qc_debug(hdl, "STHYI@LPAR succeeded\n");
+	priv->avail = STHYI_AVAILABLE;
+#endif
+
+	return 0;
+}
 
 static int qc_parse_sthyi_machine(struct qc_handle *cec, struct inf0mac *machine) {
 	qc_debug(cec, "Add CEC values from STHYI\n");
@@ -162,7 +179,7 @@ static int qc_parse_sthyi_partition(struct qc_handle *lpar, struct inf0par *part
 			goto out_err;
 	}
 
-	if (partition->infpval1 & INFPLGVL && (rc = qc_is_nonempty_ebcdic(lpar, partition->infplgnm, sizeof(partition->infplgnm))) > 0) {
+	if (partition->infpval1 & INFPLGVL && (rc = qc_is_nonempty_ebcdic((__u64*)partition->infplgnm)) > 0) {
 		/* LPAR group is only defined in case group name is not empty */
 		qc_debug(lpar, "Insert LPAR group layer\n");
 		if (qc_insert_handle(lpar, &group, QC_LAYER_TYPE_LPAR_GROUP)) {
@@ -211,7 +228,6 @@ static int qc_parse_sthyi_hypervisor(struct qc_handle *hdl, struct inf0hyp *hv) 
 
 static int qc_parse_sthyi_guest(struct qc_handle *gst, struct inf0gst *guest) {
 	struct qc_handle *pool_hdl;
-	int rc;
 
 	qc_debug(gst, "Add Guest values from STHYI\n");
 	if (qc_set_attr_int(gst, qc_mobility_eligible, (guest->infgflg1 & INFGMOB) ? 1 : 0, ATTR_SRC_STHYI) ||
@@ -245,7 +261,7 @@ static int qc_parse_sthyi_guest(struct qc_handle *gst, struct inf0gst *guest) {
 		return -5;
 
 	/* if pool name is empty then we're done */
-	if ((rc = qc_is_nonempty_ebcdic(gst, guest->infgpnam, sizeof(guest->infgpnam))) > 0) {
+	if (qc_is_nonempty_ebcdic((__u64*)guest->infgpnam)) {
 		qc_debug(gst, "Add Pool values\n");
 		qc_debug(gst, "Layer %2d: z/VM pool\n", gst->layer_no);
 		if (qc_insert_handle(gst, &pool_hdl, QC_LAYER_TYPE_ZVM_CPU_POOL)) {
@@ -260,10 +276,9 @@ static int qc_parse_sthyi_guest(struct qc_handle *gst, struct inf0gst *guest) {
 		    qc_set_attr_int(pool_hdl, qc_cp_capped_capacity, htobe32(guest->infgpccc), ATTR_SRC_STHYI) ||
 		    qc_set_attr_int(pool_hdl, qc_ifl_capped_capacity, htobe32(guest->infgpicc), ATTR_SRC_STHYI))
 			return -7;
-		rc = 0;
 	}
 
-	return rc;
+	return 0;
 }
 
 static int qc_get_num_vm_layers(struct qc_handle *hdl, int *rc) {
@@ -490,20 +505,21 @@ static int qc_sthyi_open(struct qc_handle *hdl, char **buf) {
 			goto out;
 		priv->avail = STHYI_AVAILABLE;
 	} else {
-		if (!qc_is_sthyi_available()) {
-			qc_debug(hdl, "STHYI not available\n");
-			goto out;
+		/* There is no way for us to check programmatically whether
+		   we're in an LPAR or in a VM, so we simply try out both */
+		if (qc_is_sthyi_available_vm(hdl)) {
+			qc_debug(hdl, "Executing STHYI@VM\n");
+			/* we assume we are not relocated at this spot, between STFLE and STHYI */
+			if (qc_sthyi_vm(priv)) {
+				qc_debug(hdl, "Error: STHYI@VM execution failed\n");
+				rc = -3;
+				goto out;
+			}
+		} else {
+			qc_debug(hdl, "STHYI@VM is not available\n");
+			rc = qc_sthyi_lpar(hdl, priv);
 		}
-		qc_debug(hdl, "STHYI is available\n");
-		/* we assume we are not relocated at this spot, between STFLE and STHYI */
-		if (!qc_sthyi(priv->data)) {
-			qc_debug(hdl, "Error: STHYI execution failed\n");
-			rc = -3;
-			goto out;
-		}
-		priv->avail = STHYI_AVAILABLE;
 	}
-	goto out;
 
 out:
 	qc_debug_indent_dec();

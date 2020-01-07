@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2015 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 #define _GNU_SOURCE
 #include <sys/types.h>
@@ -195,7 +195,7 @@ static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char
 			vmxx[j] = c;
 		// Parse file till we find control program ID and name (which precedes)
 		// Note: strtok_r will skip empty lines - hence we can't start out reading the next line
-		//       start of the loop, or we'd we skipping a line when looping in the big loop
+		//       start of the loop, or we'd skip a line when looping in the big loop
 		layer_name[0] = '\0';
 		do {
 			if (strncmp(*line, vmxx, 5) != 0)
@@ -224,7 +224,7 @@ static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char
 			guesttype = QC_LAYER_TYPE_ZVM_GUEST;
 			qc_debug(hdl, "Layer %2d: z/VM-host\n", hdl->layer_no + 1);
 			qc_debug(hdl, "Layer %2d: z/VM-guest\n", hdl->layer_no + 2);
-		} else if (!strncmp(str_buf, "KVM/Linux", strlen("KVM/Linux"))) {
+		} else if (!strncmp(str_buf, "KVM", strlen("KVM"))) {
 			hosttype = QC_LAYER_TYPE_KVM_HYPERVISOR;
 			guesttype = QC_LAYER_TYPE_KVM_GUEST;
 			qc_debug(hdl, "Layer %2d: KVM-host\n", hdl->layer_no + 1);
@@ -338,6 +338,8 @@ static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char **sptr, ch
 			QC_SYSINFO_PARSE_LINE_INT(hdl, "Dedicated: %i", qc_num_cpu_dedicated);
 			QC_SYSINFO_PARSE_LINE_INT(hdl, "Shared: %i", qc_num_cpu_shared);
 		}
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "Extended Name: %256[^\n]", 256, qc_layer_extended_name);
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "UUID: %36s", 36, qc_layer_uuid);
 	}
 	rc = qc_derive_part_char_num(hdl);
 

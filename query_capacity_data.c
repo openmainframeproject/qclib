@@ -1,4 +1,4 @@
-/* IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 //_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
@@ -72,6 +72,8 @@ struct qc_lpar_values {
 	char partition_char[26];
 	int partition_char_num;
 	char layer_name[9];
+	char layer_extended_name[257];
+	char layer_uuid[37];
 	int adjustment;
 	int num_cpu_total;
 	int num_cpu_configured;
@@ -262,6 +264,8 @@ static struct qc_attr lpar_attrs[] = {
 	{qc_partition_char, string, offsetof(struct qc_lpar_values, partition_char)},
 	{qc_partition_char_num, integer, offsetof(struct qc_lpar_values, partition_char_num)},
 	{qc_layer_name, string, offsetof(struct qc_lpar_values, layer_name)},
+	{qc_layer_extended_name, string, offsetof(struct qc_lpar_values, layer_extended_name)},
+	{qc_layer_uuid, string, offsetof(struct qc_lpar_values, layer_uuid)},
 	{qc_adjustment, integer, offsetof(struct qc_lpar_values, adjustment)},
 	{qc_num_cpu_total, integer, offsetof(struct qc_lpar_values, num_cpu_total)},
 	{qc_num_cpu_configured, integer, offsetof(struct qc_lpar_values, num_cpu_configured)},
@@ -709,22 +713,9 @@ int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigne
 	return rc;
 }
 
-// Certain parts assume that empty strings might also consist of spaces
-// Returns >0 if not empty, 0 if empty, and <0 for errors
-int qc_is_nonempty_ebcdic(struct qc_handle *hdl, const unsigned char *buf, unsigned int buflen) {
-	char str[9] = "";	// suffices for all users of this function
-
-	if (*buf == '\0')
-		return 0;
-	if (buflen > sizeof(str)) {
-		qc_debug(hdl, "Error: Insufficient static buffer length\n");
-		return -1;
-	}
-	memcpy(str, buf, buflen);
-	if (qc_ebcdic_to_ascii(hdl, str, sizeof(str)))
-		return -2;
-
-	return *str != '\0';
+int qc_is_nonempty_ebcdic(__u64 *str) {
+	// CPU Pools in STHYI have all EBCDIC spaces if not set
+	return *str != 0x0 && *str != 0x4040404040404040ULL;
 }
 
 // Sets attribute 'id' in layer as pointed to by 'hdl'

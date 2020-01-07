@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -515,6 +515,8 @@ void print_lpar_information(void *hdl, int layer, int indent) {
 	print_int_attr(hdl, qc_layer_type_num, "n/a", layer, indent);
 	print_int_attr(hdl, qc_layer_category_num, "n/a", layer, indent);
 	print_string_attr(hdl, qc_layer_name, "S V", layer, indent);
+	print_string_attr(hdl, qc_layer_extended_name, "S  ", layer, indent);
+	print_string_attr(hdl, qc_layer_uuid, "S  ", layer, indent);
 	print_int_attr(hdl, qc_partition_number, "S V", layer, indent);
 	print_string_attr(hdl, qc_partition_char, "S  ", layer, indent);
 	print_int_attr(hdl, qc_partition_char_num, "S  ", layer, indent);
@@ -555,7 +557,7 @@ void print_zvmhyp_information(void *hdl, int layer, int indent) {
 	print_string_attr(hdl, qc_layer_category, "n/a", layer, indent);
 	print_int_attr(hdl, qc_layer_type_num, "n/a", layer, indent);
 	print_int_attr(hdl, qc_layer_category_num, "n/a", layer, indent);
-	print_string_attr(hdl, qc_layer_name, "S V", layer, indent);
+	print_string_attr(hdl, qc_layer_name, "  V", layer, indent);
 	print_string_attr(hdl, qc_cluster_name, "  V", layer, indent);
 	print_string_attr(hdl, qc_control_program_id, "S  ", layer, indent);
 	print_int_attr(hdl, qc_adjustment, "S  ", layer, indent);
@@ -733,6 +735,14 @@ static void *run_test(int quiet, int fulltest) {
 	void *hdl = NULL, *hdl2 = NULL;
 
 	err_cnt = 0;
+	if (fulltest) {
+		// First sanity check: Call with invalid handle before any were opened
+		qc_get_num_layers((void*)0x1, &i);
+		if (i >= 0) {
+			printf("Error: qc_get_num_layers(0x1, &rc) worked, returning '%d'\n", i);
+			err_cnt++;
+		}
+	}
 	if (get_handle(&hdl, &layers, quiet) != 0) {
 		err_cnt++;
 		goto out;
@@ -851,7 +861,7 @@ int main(int argc, char **argv) {
 	if (!hdls)
 		return 1;
 	if (optind < argc) {
-		// dump(s) specified on command line - dump all, and close handels later on
+		// dump(s) specified on command line - dump all, and close handles later on
 		for (j = 0, i = optind; i < argc; ++i, ++j) {
 			setenv("QC_USE_DUMP", argv[i], 1);
 			if ((hdls[j] = run_test(quiet, 0)) == NULL)

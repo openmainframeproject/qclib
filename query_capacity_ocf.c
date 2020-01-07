@@ -22,7 +22,7 @@ static void qc_ocf_dump(struct qc_handle *hdl, char *data) {
 	qc_debug(hdl, "Dump ocf\n");
 	qc_debug_indent_inc();
 	if (!data)
-		return;
+		goto out;
 	if (asprintf(&path, "%s/ocf", qc_dbg_dump_dir) == -1) {
 		qc_debug(hdl, "Error: Mem alloc failure, cannot dump sysinfo\n");
 		goto out_err;

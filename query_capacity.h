@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2017 */
 
 /** @file */
 
@@ -15,36 +15,30 @@
  * what layers. The letter encoding in the 'Src' column describes how the
  * value is gained:
  *   - **S**: Provided by \c /proc/sysinfo, which is present in all Linux on z flavors.
- *   - **O**: Provided by \c /sys/firmware/oci. Available in Linux 3.0 or higher.
+ *   - **O**: Provided by \c /sys/firmware/ocf. Available in Linux kernel 3.0 or higher.
  *   - **H**: Provided by hypfs, which is (preferably) available through \c debugfs at
  *            \c /sys/kernel/debug/s390_hypfs, or \c s390_hypfs (typically mounted at
- *            \c /sys/hypervisor/s390.
+ *            \c /sys/hypervisor/s390).
  *            Proper file access privileges required.
  *   - **h**: See H, but provided by \c debugfs exclusively.
- *   - **V**: Provided by the STHYI instruction in z/VM. Requires z/VM 6.3 with APAR
- *            VM65419 or higher. UM34746 for z/VM 6.3.0 APAR VM65716 is required for
- *            LPAR groups support (see layer \c QC_LAYER_TYPE_LPAR_GROUP).
+ *   - **V**: Provided by the STHYI instruction.
+ *            - <i>z/VM Linux guests</i>: Requires z/VM 6.3 with APAR VM65419 or higher.
+ *              UM34746 for z/VM 6.3.0 APAR VM65716 is required for LPAR groups support
+ *              (see layer \c QC_LAYER_TYPE_LPAR_GROUP).
+ *            - <i>KVM Linux guests</i>: Requires Linux kernel 4.8 or higher in the KVM host.
+ *            - <i>Linux LPAR</i>: Requires Linux kernel 4.15 or higher in the KVM host.
  *
  * Several letters indicate the order in which the value is attempted to be
  * acquired. If the extraction of the value in a later phase succeeds, it will
  * overwrite the value acquired in an earlier phase. If the extraction of the
  * value in a later phase does not succeed, it will not dismiss the existing
- * value, if a previous phase has set it before.
+ * value, if a previous phase has set it before.<br>
  *
- * For platform agnostic processing (not caring about what layers are
- * present in the system), it is recommended to walk through all layers,
- *  - processing #qc_num_cpu_total, #qc_num_cpu_dedicated, and #qc_num_cpu_shared, if the
- *    layer is of the category \c "HOST" or \c "GUEST", and
- *  - process pool capping values, if the layer is in the \c "POOL" category.
- * Then find the minimal number of the stack for a single virtual server; for
- * running on multiple virtual servers, use #qc_layer_name to identify layers
- * (since several higher layer entities could run on the same lower layer entity).
- * Using only said attributes should result in a high probability of
- * good results -- those attributes should be presented by all layers and
- * provided by all sane setups.
- *
- * <b>Notes</b>:
- * - The term <i>CPU</i> is used synonymously with <I>core</I> when MT is enabled.
+ * ### Notes ###
+ * - Special care needs to be taken with respect to [5] when processing #qc_num_cpu_total,
+ *   #qc_num_cpu_dedicated and #qc_num_cpu_shared in layers of type QC_LAYER_TYPE_LPAR.
+ * - When MT is enabled, all layers above the LPAR layer will report each thread as a separate
+ *   CPU. Otherwise, the term <i>CPU</i> is synonymous with <I>core</I>.
  * - A z/VM-guest running in a z/VM-CPU-pool is a layer higher than the z/VM-CPU-pool
  * - All strings (char pointers) carry the trailing zero byte.
  * - See #qc_attr_id for general explanation of attributes, and the \c 'Comment' column
@@ -96,7 +90,9 @@
  * #qc_layer_category_num              | int  |     | Hardcoded to \c QC_LAYER_CAT_GUEST
  * #qc_layer_type                      |string|     | Hardcoded to \c "LPAR"
  * #qc_layer_category                  |string|     | Hardcoded to \c "GUEST"
- * #qc_layer_name                      |string|<CODE>S&nbsp;V</CODE>| Name of LPAR
+ * #qc_layer_name                      |string|<CODE>S&nbsp;V</CODE>| Name of LPAR, limited to 8 characters
+ * #qc_layer_extended_name             |string|<CODE>S&nbsp;&nbsp;</CODE>| Name of LPAR with up to 256 characters<br><b>Note</b>: Requires Linux kernel 4.10 or higher
+ * #qc_layer_uuid                      |string|<CODE>S&nbsp;&nbsp;</CODE>| <b>Note</b>: Requires Linux kernel 4.10 or higher
  * #qc_partition_number                | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_partition_char                  |string|<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_partition_char_num              | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
@@ -214,8 +210,8 @@
  * #qc_layer_type                      |string|     | Hardcoded to \c "KVM-guest"
  * #qc_layer_category                  |string|     | Hardcoded to \c "GUEST"
  * #qc_layer_name                      |string|<CODE>S&nbsp;&nbsp;</CODE>| Guest name truncated to 8 characters<br><b>Note</b>: \b [1]
- * #qc_layer_extended_name             |string|<CODE>S&nbsp;&nbsp;</CODE>| Guest name with up to 256 characters<br><b>Note</b>: \b [1]
- * #qc_layer_uuid                      |string|<CODE>S&nbsp;&nbsp;</CODE>| Guest's universal unique ID
+ * #qc_layer_extended_name             |string|<CODE>S&nbsp;&nbsp;</CODE>| Guest name with up to 256 characters<br><b>Note</b>: Requires Linux kernel 3.19 or higher, [1]
+ * #qc_layer_uuid                      |string|<CODE>S&nbsp;&nbsp;</CODE>| <b>Note</b>: Requires Linux kernel 3.19 or higher
  * #qc_num_cpu_total                   | int  |<CODE>S&nbsp;&nbsp;</CODE>| Sum of #qc_num_cpu_configured, #qc_num_cpu_standby and #qc_num_cpu_reserved, or #qc_num_cpu_dedicated and #qc_num_cpu_shared
  * #qc_num_cpu_configured              | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
  * #qc_num_cpu_standby                 | int  |<CODE>S&nbsp;&nbsp;</CODE>| \n
@@ -322,7 +318,7 @@ enum qc_attr_id {
 	qc_cp_weight_capping = 14,
 	/** 1 if SRM hardlimit setting is consumption<BR> 0 if deadline<br>See \c SET \c SRM command in [3] */
 	qc_hardlimit_consumption = 15,
-	/** 1 if guest has multiple CPU types,<BR> 0 if not */
+	/** 1 if layer has multiple CPU types (e.g. CPs and IFLs),<BR> 0 if not */
 	qc_has_multiple_cpu_types = 16,
 	/** IFL absolute capping value -- scaled value where 0x10000 equals one CPU, or 0 if no capping set */
 	qc_ifl_absolute_capping = 17,
@@ -350,7 +346,7 @@ enum qc_attr_id {
 	qc_layer_type = 28,
 	/** Numeric representation  of layer type, see enum #qc_layer_types */
 	qc_layer_type_num = 29,
-	/** Guest's universal unique ID */
+	/** Universal unique ID */
 	qc_layer_uuid = 30,
 	/** Company that manufactured box */
 	qc_manufacturer = 31,
@@ -418,11 +414,15 @@ enum qc_attr_id {
  * system.<BR>
  * Use the following environment variables to operate built-in service facilities:
  * - \c QC_DEBUG: Set to an integer value
- *   - >0 to enable logging to a file \c /tmp/qclib-XXXXXX.
- *   - >1 to have data dumped to a directory named \c /tmp/qclib-XXXXXX.dump-XXX
- *     on every qc_open() call.<br>
- *  To disable logging, either see qc_close(), or set \c QC_DEBUG to a value
+ *   - >0 to enable logging to a file \c /tmp/qclib-XXXXXX or as specified by
+ *     \c QC_DEBUG_FILE if set.
+ *   - >1 to have data dumped to a directory named \c \<STEM\>.dump-XXX
+ *     on every qc_open() call (where STEM is \c /tmp/qclib-XXXXXX or as specified
+ *     by \c QC_DEBUG_FILE if set.<br>
+ *   To disable logging, either see qc_close(), or set \c QC_DEBUG to a value
  *   <=0 on the next qc_open() call.<BR>
+ * - \c QC_DEBUG_FILE: Stem to use for log files and dump directories (see \c
+ *   QC_DEBUG). Defaults to \c /tmp/qclib-XXXXXX.
  * - \c QC_AUTODUMP: Set to a value >0 to trigger a dump to a directory named
  *   \c /tmp/qclib-XXXXXX.dump-XXX if an error is encountered within qc_open().<br>
  *   <b>Note</b>: This will also create an empty log file for technical reasons,

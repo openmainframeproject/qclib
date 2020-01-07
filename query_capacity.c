@@ -1,4 +1,4 @@
-/* IBM Corp. 2013, 2016 */
+/* Copyright IBM Corp. 2013, 2016 */
 
 //_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
@@ -21,6 +21,12 @@ static long	     qc_dbg_autodump;
 static unsigned int  qc_dbg_dump_idx;
 static iconv_t	     qc_cd = (iconv_t)-1;
 
+struct qc_reg_hdl {
+	struct qc_handle	*hdl;
+	struct qc_reg_hdl	*next;
+};
+
+static struct qc_reg_hdl *qc_hdls = NULL;
 
 static void __attribute__((destructor)) qc_destructor() {
 	if (qc_cd != (iconv_t)-1)
@@ -85,18 +91,28 @@ static int qc_debug_file_init(void) {
 	int fd;
 
 	if (!qc_dbg_file_name) {
-		qc_dbg_file_name = strdup(QC_DBGFILE);
-		if (!qc_dbg_file_name)
-			goto out_err;
-		fd = mkstemp(qc_dbg_file_name);
-		if (fd == -1)
-			goto out_err;
-		qc_dbg_file = fdopen(fd, "w");
-		if (!qc_dbg_file) {
-			close(fd);
-			goto out_err;
+		char *s = getenv("QC_DEBUG_FILE");
+		if (s) {
+			qc_dbg_file_name = strdup(s);
+			if (!qc_dbg_file_name)
+				goto out_err;
+			qc_dbg_file = fopen(qc_dbg_file_name, "w");
+			if (!qc_dbg_file)
+				goto out_err;
+		} else {
+			qc_dbg_file_name = strdup(QC_DBGFILE);
+			if (!qc_dbg_file_name)
+				goto out_err;
+			fd = mkstemp(qc_dbg_file_name);
+			if (fd == -1)
+				goto out_err;
+			qc_dbg_file = fdopen(fd, "w");
+			if (!qc_dbg_file) {
+				close(fd);
+				goto out_err;
+			}
 		}
-		qc_debug(NULL, "This is qclib v1.2.0, level a7ecaf7, date 2016-06-03 09:04:14 +0200\n");
+		qc_debug(NULL, "This is qclib v1.3.0, level 9c8868c, date 2017-10-20 10:15:56 +0200\n");
 	}
 
 	return 0;
@@ -104,6 +120,7 @@ static int qc_debug_file_init(void) {
 out_err:
 	free(qc_dbg_file_name);
 	qc_dbg_file_name = NULL;
+	qc_dbg_level = 0;
 
 	return -1;
 }
@@ -112,7 +129,7 @@ static int qc_debug_open_dump_dir(struct qc_handle *hdl) {
 	int i;
 
 	if (!qc_dbg_file_name && qc_debug_file_init())
-			return -1;
+		return -1;
 	for (i = 0, ++qc_dbg_dump_idx; i < 100; ++i, ++qc_dbg_dump_idx) {
 		free(qc_dbg_dump_dir);
 		qc_dbg_dump_dir = NULL;
@@ -169,9 +186,8 @@ static int qc_debug_init(void) {
 	}
 	qc_update_dbg_level();
 	if (qc_dbg_level > 0 && !qc_dbg_file) {
-		// open the log file - failure to do so is not a fatal error
 		if (qc_debug_file_init()) {
-			qc_dbg_level = 0;
+			rc = 1;
 			goto out_err;
 		}
 		qc_debug(NULL, "Log level set to %ld\n", qc_dbg_level);
@@ -298,36 +314,6 @@ static void qc_hdl_reinit(struct qc_handle *hdl) {
 			free(ptr);
 		ptr = hdl;
 	}
-}
-
-void qc_close(void *hdl) {
-	qc_debug(hdl, "qc_close()\n");
-	qc_debug_indent_inc();
-
-	qc_debug_deinit(hdl);
-	qc_hdl_reinit(hdl);
-	free(hdl);
-
-	qc_debug_indent_dec();
-}
-
-int qc_get_num_layers(void *config, int *rc) {
-	struct qc_handle *hdl = config;
-
-	qc_debug(hdl, "qc_get_num_layers()\n");
-	qc_debug_indent_inc();
-	if (!hdl) {
-		qc_debug_indent_dec();
-		*rc = -EFAULT;
-		return *rc;
-	}
-	while (hdl->next)
-		hdl = hdl->next;
-	qc_debug(hdl, "Return %d layers\n", hdl->layer_no + 1);
-	*rc = 0;
-	qc_debug_indent_dec();
-
-	return hdl->layer_no + 1;
 }
 
 #define ATTR_UNDEF	qc_layer_name
@@ -609,10 +595,12 @@ out:
 	if (qc_dbg_level > 1 || (qc_dbg_autodump && *rc < 0)) {
 		qc_debug(hdl, "Create dump\n");
 		qc_debug_indent_inc();
-		qc_debug_open_dump_dir(hdl);	// get a new dump directory
-		for (i = 0; (src = sources[i]) != NULL; i++)
-			src->dump(hdl, src->priv);
-		qc_debug_close_dump_dir(hdl);
+		if (qc_debug_open_dump_dir(hdl) == 0) {	// get a new dump directory
+			for (i = 0; (src = sources[i]) != NULL; i++)
+				src->dump(hdl, src->priv);
+			qc_debug_close_dump_dir(hdl);
+		} else
+			qc_debug(hdl, "Failed, could not open directory\n");
 		qc_debug_indent_dec();
 	}
 
@@ -623,6 +611,56 @@ out:
 	qc_debug_indent_dec();
 
 	return hdl;
+}
+
+static int qc_register_hdl(struct qc_handle *hdl) {
+	struct qc_reg_hdl *entry;
+
+	entry = malloc(sizeof(struct qc_reg_hdl));
+	if (!entry) {
+		qc_debug(hdl, "Error: Failed register hdl\n");
+		return -1;
+	}
+	entry->hdl = hdl;
+	if (qc_hdls)
+		entry->next = qc_hdls;
+	else
+		entry->next = NULL;
+	qc_hdls = entry;
+
+	return 0;
+}
+
+static int qc_verify_hdl(struct qc_handle *hdl, const char *func) {
+	struct qc_reg_hdl *entry;
+
+	if (!hdl)
+		return -1;
+	for (entry = qc_hdls; entry != NULL; entry = entry->next) {
+		if (entry->hdl == hdl)
+			return 0;
+	}
+	qc_debug(NULL, "Error: %s() called with unknown handle 0x%p\n", func, hdl);
+
+	return -1;
+}
+
+static void qc_unregister_hdl(struct qc_handle *hdl) {
+	struct qc_reg_hdl *entry, *prev = NULL;
+
+	for (entry = qc_hdls; entry != NULL; prev = entry, entry = entry->next) {
+		if (entry->hdl == hdl) {
+			if (prev && entry->next)
+				prev->next = entry->next;
+			else if (!prev)
+				qc_hdls = entry->next;
+			else
+				prev->next = NULL;
+			free(entry);
+			break;
+		}
+	}
+	return;
 }
 
 void *qc_open(int *rc) {
@@ -669,6 +707,8 @@ void *qc_open(int *rc) {
 	if (*rc > 0) {
 		qc_debug(hdl, "Warning: Unable to retrieve consistent data, giving up\n");
 	}
+	if (*rc == 0)
+		*rc = qc_register_hdl(hdl);
 
 out:
 	qc_debug(hdl, "Return %p, rc=%d\n", *rc ? NULL : hdl, *rc);
@@ -681,12 +721,42 @@ out:
 	return hdl;
 }
 
+void qc_close(void *hdl) {
+	if (qc_verify_hdl(hdl, "qc_close"))
+		return;
+	qc_debug(hdl, "qc_close()\n");
+	qc_debug_indent_inc();
+
+	qc_debug_deinit(hdl);
+	qc_hdl_reinit(hdl);
+	qc_unregister_hdl(hdl);
+	free(hdl);
+
+	qc_debug_indent_dec();
+}
+
+int qc_get_num_layers(void *cfg, int *rc) {
+	struct qc_handle *hdl = cfg;
+
+	if (qc_verify_hdl(hdl, "qc_get_num_layers")) {
+		*rc = -EFAULT;
+		return *rc;
+	}
+	qc_debug(hdl, "qc_get_num_layers()\n");
+	qc_debug_indent_inc();
+	while (hdl->next)
+		hdl = hdl->next;
+	qc_debug(hdl, "Return %d layers\n", hdl->layer_no + 1);
+	*rc = 0;
+	qc_debug_indent_dec();
+
+	return hdl->layer_no + 1;
+}
+
 static struct qc_handle *qc_get_layer_handle(void *config, int layer) {
 	struct qc_handle *hdl = config;
 
 	do {
-		if (!hdl)
-			return NULL;
 		if (hdl->layer_no == layer)
 			return hdl;
 		hdl = hdl->next;
@@ -700,10 +770,13 @@ static int qc_is_attr_id_valid(enum qc_attr_id id) {
 }
 
 int qc_get_attribute_string(void *cfg, enum qc_attr_id id, int layer, const char **value) {
-	struct qc_handle *hdl = qc_get_layer_handle(cfg, layer);
+	struct qc_handle *hdl;
 	int rc;
 
 	*value = NULL;
+	if (qc_verify_hdl(cfg, "qc_get_attribute_string"))
+		return -4;
+	hdl = qc_get_layer_handle(cfg, layer);
 	qc_debug(cfg, "qc_get_attribute_string(attr=%d, layer=%d)\n", id, layer);
 	qc_debug_indent_inc();
 	if (!hdl) {
@@ -733,11 +806,14 @@ out:
 }
 
 int qc_get_attribute_int(void *cfg, enum qc_attr_id id, int layer, int *value) {
-	struct qc_handle *hdl = qc_get_layer_handle(cfg, layer);
+	struct qc_handle *hdl;
 	void *ptr = NULL;
 	int rc;
 
 	*value = -EINVAL;
+	if (qc_verify_hdl(cfg, "qc_get_attribute_int"))
+		return -4;
+	hdl = qc_get_layer_handle(cfg, layer);
 	qc_debug(cfg, "qc_get_attribute_int(attr=%d, layer=%d)\n", id, layer);
 	qc_debug_indent_inc();
 	if (!hdl) {
@@ -772,11 +848,14 @@ out:
 
 
 int qc_get_attribute_float(void *cfg, enum qc_attr_id id, int layer, float *value) {
-	struct qc_handle *hdl = qc_get_layer_handle(cfg, layer);
+	struct qc_handle *hdl;
 	void *ptr = NULL;
 	int rc;
 
 	*value = -EINVAL;
+	if (qc_verify_hdl(cfg, "qc_get_attribute_float"))
+		return -4;
+	hdl = qc_get_layer_handle(cfg, layer);
 	qc_debug(cfg, "qc_get_attribute_float(attr=%d, layer=%d)\n", id, layer);
 	qc_debug_indent_inc();
 	if (!hdl) {

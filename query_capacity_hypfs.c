@@ -4,7 +4,6 @@
 #define _DEFAULT_SOURCE
 
 #include <sys/stat.h>
-#include <linux/types.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -364,7 +363,6 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 	struct dfs_sys_hdr *sys_hdr, *tgt_lpar;
 	struct dfs_cpu_info *cpu;
 	struct qc_handle *group;
-	__u64 *p;
 
 	qc_debug(hdl, "Add LPAR values from binary hypfs API\n");
 	qc_debug_indent_inc();
@@ -435,7 +433,7 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 		     qc_set_attr_int(hdl, qc_ifl_weight_capping, ifl_weight ? *ifl_sh * 0x10000 * ifl_weight / ifl_all_weight : 0, ATTR_SRC_HYPFS)))
 			goto out_err;
 	}
-	if (*(p = (__u64 *)tgt_lpar->grp_name) != 0) {
+	if (qc_is_nonempty_ebcdic((__u64*)tgt_lpar->grp_name)) {
 		/* LPAR group is only defined in case group name is not binary zero */
 		qc_debug(hdl, "Insert LPAR group layer\n");
 		if (qc_insert_handle(hdl, &group, QC_LAYER_TYPE_LPAR_GROUP)) {
@@ -691,7 +689,7 @@ static int qc_get_zvm_diag_data(struct qc_handle **hdl, struct dfs_diag_hdr *hdr
 
 	if ((*hdl = qc_get_zvm_hdl(*hdl, &s)) == NULL)
 		return -1;
-	qc_debug(*hdl, "Found data for %llu z/VM guest(s)\n", htobe64(hdr->count));
+	qc_debug(*hdl, "Found data for %" PRIu64 " z/VM guest(s)\n", htobe64((uint64_t)hdr->count));
 	for (i = 0, *data = (struct dfs_diag2fc*)(hdr + 1); i < htobe64(hdr->count); ++i, ++*data) {
 		memset(&name, 0, QC_NAME_LEN + 1);
 		memcpy(name, (*data)->guest_name, QC_NAME_LEN);
