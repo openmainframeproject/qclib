@@ -1,16 +1,14 @@
-/* Copyright IBM Corp. 2013, 2018 */
+/* Copyright IBM Corp. 2013, 2019 */
 
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
 
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <dirent.h>
 #include <mntent.h>
 #include <endian.h>
 
-#include "query_capacity_int.h"
 #include "query_capacity_data.h"
 
 
@@ -19,6 +17,7 @@
 #define QC_NAME_LEN		8
 #define QC_CPU_TYPE_CP		0
 #define QC_CPU_TYPE_IFL		3
+#define QC_CPU_TYPE_ZIIP	5
 
 #define QC_FLAG_PHYS		0x80
 #define QC_CPU_DEDICATED	0xffff
@@ -365,11 +364,12 @@ out:
 #endif
 
 static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
-	int ifl = 0, cp = 0, ifl_ded = 0, cp_ded = 0, ifl_cap = 0, cp_cap = 0, ifl_weight = 0,
-	    cp_weight = 0, ifl_abs_cap = 0, cp_abs_cap = 0, cp_all_weight = 0, ifl_all_weight = 0,
-	    cp_w, ifl_w, un = 0, *ifl_sh, *cp_sh, i, j, rc = -1, gpd_available;
-	struct dfs_info_blk_hdr *time_hdr;
+	int ziip = 0, ziip_ded = 0, ziip_cap = 0, ziip_weight = 0, ziip_abs_cap = 0, ziip_all_weight = 0, ziip_w, *ziip_sh;
+	int ifl = 0, ifl_ded = 0, ifl_cap = 0, ifl_weight = 0, ifl_abs_cap = 0, ifl_all_weight = 0, ifl_w, *ifl_sh;
+	int cp = 0, cp_ded = 0, cp_cap = 0, cp_weight = 0, cp_abs_cap = 0, cp_all_weight = 0, cp_w, *cp_sh;
+	int un = 0, i, j, rc = -1, gpd_available;
 	struct dfs_sys_hdr *sys_hdr, *tgt_lpar;
+	struct dfs_info_blk_hdr *time_hdr;
 	struct dfs_cpu_info *cpu;
 	struct qc_handle *group;
 	int cap_active = 0;
@@ -383,7 +383,7 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 	qc_debug(hdl, "Found data for %d LPAR(s), GPD data is %savailable\n", time_hdr->npar, gpd_available ? "" : "NOT ");
 	for (i = 0; i < time_hdr->npar; ++i) {
 		cpu = (struct dfs_cpu_info*)(sys_hdr + 1);
-		cp_w = ifl_w = 0;
+		cp_w = ifl_w = 0, ziip_w = 0;
 		for (j = 0; j < sys_hdr->rcpus; ++j, ++cpu) {
 			if (!(cpu->cflag & QC_CPU_CONFIGURED))
 				continue;
@@ -416,6 +416,19 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 				if (cpu->weight != QC_CPU_DEDICATED)
 					ifl_w = htobe16(cpu->weight);
 				break;
+			case QC_CPU_TYPE_ZIIP:
+				if (sys_hdr == tgt_lpar) {
+					ziip++;
+					ziip_cap = htobe32(cpu->groupCpuTypeCap);
+					ziip_abs_cap = htobe32(cpu->cpuTypeCap);
+					if (cpu->weight == QC_CPU_DEDICATED)
+						ziip_ded++;
+					else
+						ziip_weight = htobe16(cpu->weight);
+				}
+				if (cpu->weight != QC_CPU_DEDICATED)
+					ziip_w = htobe16(cpu->weight);
+				break;
 			default:
 				if (sys_hdr == tgt_lpar)
 					un++;
@@ -424,9 +437,10 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 		}
 		cp_all_weight += cp_w;
 		ifl_all_weight += ifl_w;
+		ziip_all_weight += ziip_w;
 		sys_hdr = (struct dfs_sys_hdr *)cpu;
 	}
-	qc_debug(hdl, "Found %d cpus total (%d CP, %d IFL, %d UN)\n", cp + ifl + un, cp, ifl, un);
+	qc_debug(hdl, "Found %d cpus total (%d CP, %d IFL, %d zIIP, %d UN)\n", cp + ifl + ziip + un, cp, ifl, ziip, un);
 	hdl = qc_get_lpar_handle(hdl);
 	if (qc_set_attr_int(hdl, qc_num_cp_total, cp, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_cp_dedicated, cp_ded, ATTR_SRC_HYPFS) ||
@@ -434,15 +448,21 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 	    qc_set_attr_int(hdl, qc_num_ifl_total, ifl, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, ifl_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_shared, ifl - ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ziip_total, ziip, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ziip_dedicated, ziip_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ziip_shared, ziip - ziip_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_cp_absolute_capping, cp_abs_cap * 0x10000 / 100, ATTR_SRC_HYPFS) ||
-	    qc_set_attr_int(hdl, qc_ifl_absolute_capping, ifl_abs_cap * 0x10000 / 100, ATTR_SRC_HYPFS))
+	    qc_set_attr_int(hdl, qc_ifl_absolute_capping, ifl_abs_cap * 0x10000 / 100, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_ziip_absolute_capping, ziip_abs_cap * 0x10000 / 100, ATTR_SRC_HYPFS))
 		goto out_err;
 	if (gpd_available) {
 		cp_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_cp_shared);
 		ifl_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_ifl_shared);
+		ziip_sh = qc_get_attr_value_int(qc_get_cec_handle(hdl), qc_num_ziip_shared);
 		if (cap_active && cp_sh && ifl_sh &&
 		    (qc_set_attr_int(hdl, qc_cp_weight_capping, cp_weight ? *cp_sh * 0x10000 * cp_weight / cp_all_weight : 0, ATTR_SRC_HYPFS) ||
-		     qc_set_attr_int(hdl, qc_ifl_weight_capping, ifl_weight ? *ifl_sh * 0x10000 * ifl_weight / ifl_all_weight : 0, ATTR_SRC_HYPFS)))
+		     qc_set_attr_int(hdl, qc_ifl_weight_capping, ifl_weight ? *ifl_sh * 0x10000 * ifl_weight / ifl_all_weight : 0, ATTR_SRC_HYPFS) ||
+		     qc_set_attr_int(hdl, qc_ziip_weight_capping, ziip_weight ? *ziip_sh * 0x10000 * ziip_weight / ziip_all_weight : 0, ATTR_SRC_HYPFS)))
 			goto out_err;
 	}
 	if (qc_is_nonempty_ebcdic((__u64*)tgt_lpar->grp_name)) {
@@ -457,6 +477,8 @@ static int qc_fill_in_hypfs_lpar_values_bin(struct qc_handle *hdl, __u8 *data) {
 			rc |= qc_set_attr_int(group, qc_cp_absolute_capping, cp_cap * 0x10000 / 100, ATTR_SRC_STHYI);
 		if (ifl_cap)
 			rc |= qc_set_attr_int(group, qc_ifl_absolute_capping, ifl_cap * 0x10000 / 100, ATTR_SRC_STHYI);
+		if (ziip_cap)
+			rc |= qc_set_attr_int(group, qc_ziip_absolute_capping, ziip_cap * 0x10000 / 100, ATTR_SRC_STHYI);
 	}
 	rc = 0;
 
@@ -467,7 +489,7 @@ out_err:
 }
 
 static int qc_fill_in_hypfs_cec_values_bin(struct qc_handle *hdl, __u8 *data) {
-	int num_ifl = 0, num_ifl_ded = 0, num_cp = 0, num_cp_ded = 0, num_un = 0, i, rc = 0;
+	int num_ifl = 0, num_ifl_ded = 0, num_ziip = 0, num_ziip_ded = 0, num_cp = 0, num_cp_ded = 0, num_un = 0, i, rc = 0;
 	struct dfs_sys_hdr *sys_hdr = NULL;
 	struct dfs_info_blk_hdr *time_hdr;
 	struct dfs_cpu_info *cpu;
@@ -499,18 +521,26 @@ static int qc_fill_in_hypfs_cec_values_bin(struct qc_handle *hdl, __u8 *data) {
 			if (cpu->weight == QC_CPU_DEDICATED)
 				num_ifl_ded++;
 			break;
+		case QC_CPU_TYPE_ZIIP:
+			num_ziip++;
+			if (cpu->weight == QC_CPU_DEDICATED)
+				num_ziip_ded++;
+			break;
 		default:
 			num_un++;
 			break;
 		}
 	}
-	qc_debug(hdl, "CPs=%d, dedicated CPs=%d, IFLs=%d, dedicated IFLs=%d, unknown=%d\n", num_cp, num_cp_ded, num_ifl, num_ifl_ded, num_un);
+	qc_debug(hdl, "CPs=%d, dedicated CPs=%d, IFLs=%d, dedicated IFLs=%d, zIIPs=%d, dedicated zIIPs=%d, unknown=%d\n", num_cp, num_cp_ded, num_ifl, num_ifl_ded, num_ziip, num_ziip_ded, num_un);
 	if (qc_set_attr_int(hdl, qc_num_cp_total, num_cp, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_cp_dedicated, num_cp_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_cp_shared, num_cp - num_cp_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_total, num_ifl, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_dedicated, num_ifl_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_ifl_shared, num_ifl - num_ifl_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ziip_total, num_ziip, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ziip_dedicated, num_ziip_ded, ATTR_SRC_HYPFS) ||
+	    qc_set_attr_int(hdl, qc_num_ziip_shared, num_ziip - num_ziip_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_core_dedicated, num_cp_ded + num_ifl_ded, ATTR_SRC_HYPFS) ||
 	    qc_set_attr_int(hdl, qc_num_core_shared, num_ifl + num_cp - num_cp_ded - num_ifl_ded, ATTR_SRC_HYPFS))
 		rc = -1;
@@ -655,7 +685,7 @@ static int qc_fill_in_hypfs_zvm_values(struct qc_handle *hdl, const char *hypfs)
 			cap = "off";
 		}
 		if (qc_set_attr_int(hdl, qc_capping_num, cap_num, ATTR_SRC_HYPFS) ||
-		    qc_set_attr_string(hdl, qc_capping, cap, strlen(cap), ATTR_SRC_HYPFS)) {
+		    qc_set_attr_string(hdl, qc_capping, cap, ATTR_SRC_HYPFS)) {
 			rc = -3;
 			goto out;
 		}
@@ -744,7 +774,7 @@ static int qc_fill_in_hypfs_zvm_values_bin(struct qc_handle *hdl, struct hypfs_p
 		cap = "off";
 	}
 	if (qc_set_attr_int(hdl, qc_capping_num, cap_num, ATTR_SRC_HYPFS) ||
-	    qc_set_attr_string(hdl, qc_capping, cap, strlen(cap), ATTR_SRC_HYPFS)) {
+	    qc_set_attr_string(hdl, qc_capping, cap, ATTR_SRC_HYPFS)) {
 		rc = -1;
 		goto out;
 	}

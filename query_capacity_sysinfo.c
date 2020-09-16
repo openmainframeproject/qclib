@@ -1,4 +1,4 @@
-/* Copyright IBM Corp. 2013, 2018 */
+/* Copyright IBM Corp. 2013, 2019 */
 
 #define _GNU_SOURCE
 #include <sys/types.h>
@@ -6,9 +6,7 @@
 #include <sys/param.h>
 #include <fcntl.h>
 #include <string.h>
-#include <unistd.h>
 
-#include "query_capacity_int.h"
 #include "query_capacity_data.h"
 
 
@@ -126,12 +124,12 @@ static int qc_sysinfo_lgm_check(struct qc_handle *hdl, const char *sysinfo) {
 	qc_debug_indent_inc();
 	if (qc_sysinfo_open(hdl, &lsysinfo)) {
 		qc_debug(hdl, "Error: Failed to open /proc/sysinfo\n");
-		rc = 1;
+		rc = -1;
 		goto out;
 	}
 	if (strcmp(lsysinfo, sysinfo)) {
-		qc_debug(hdl, "/proc/sysinfo content changed, LGM took place\n");
-		rc = 2;
+		qc_debug(hdl, "/proc/sysinfo content changed, LGM took place!\n");
+		rc = 1;
 		goto out;
 	}
 	qc_debug(hdl, "/proc/sysinfo still consistent, no LGM detected\n");
@@ -160,25 +158,25 @@ static char *qc_copy_sysinfo(struct qc_handle *hdl, char *sysinfo) {
 }
 
 #define QC_SYSINFO_PARSE_LINE_STR_NOCONT(hdl, str, strlen, id) \
-	if (sscanf(*line, str, str_buf) > 0 && qc_set_attr_string(hdl, id, str_buf, strlen, ATTR_SRC_SYSINFO)) \
-		goto out;
+	if (sscanf(*line, str, str_buf) > 0 && qc_set_attr_string(hdl, id, str_buf, ATTR_SRC_SYSINFO)) \
+		goto out_err;
 #define QC_SYSINFO_PARSE_LINE_STR(hdl, str, strlen, id) \
 	if (sscanf(*line, str, str_buf) > 0) { \
-		if (qc_set_attr_string(hdl, id, str_buf, strlen, ATTR_SRC_SYSINFO)) \
-			goto out; \
+		if (qc_set_attr_string(hdl, id, str_buf, ATTR_SRC_SYSINFO)) \
+			goto out_err; \
 		continue; \
 	}
 #define QC_SYSINFO_PARSE_LINE_INT_inc(hdl, str, id, inc) \
 	if (sscanf(*line, str, &int_buf) > 0) { \
 		if (qc_set_attr_int(hdl, id, int_buf + inc, ATTR_SRC_SYSINFO)) \
-			goto out; \
+			goto out_err; \
 		continue; \
 	}
 #define QC_SYSINFO_PARSE_LINE_INT(hdl, str, id) QC_SYSINFO_PARSE_LINE_INT_inc(hdl, str, id, 0)
 #define QC_SYSINFO_PARSE_LINE_FLOAT(hdl, str, id) \
 	if (sscanf(*line, str, &float_buf)) { \
 		if (qc_set_attr_float(hdl, id, float_buf, ATTR_SRC_SYSINFO)) \
-			goto out; \
+			goto out_err; \
 		continue; \
 	}
 static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char **line) {
@@ -224,6 +222,12 @@ static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char
 			guesttype = QC_LAYER_TYPE_ZVM_GUEST;
 			qc_debug(hdl, "Layer %2d: z/VM-host\n", hdl->layer_no + 1);
 			qc_debug(hdl, "Layer %2d: z/VM-guest\n", hdl->layer_no + 2);
+		} else if (!strncmp(str_buf, "z/OS zCX", strlen("z/OS zCX")) ||
+			   !strncmp(str_buf, "KVM zCX", strlen("KVM zCX"))) {
+			hosttype = QC_LAYER_TYPE_ZOS_HYPERVISOR;
+			guesttype = QC_LAYER_TYPE_ZOS_ZCX_SERVER;
+			qc_debug(hdl, "Layer %2d: z/OS-host\n", hdl->layer_no + 1);
+			qc_debug(hdl, "Layer %2d: z/OS-zCX-Server\n", hdl->layer_no + 2);
 		} else if (!strncmp(str_buf, "KVM", strlen("KVM"))) {
 			hosttype = QC_LAYER_TYPE_KVM_HYPERVISOR;
 			guesttype = QC_LAYER_TYPE_KVM_GUEST;
@@ -241,10 +245,10 @@ static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char
 		if (rc)
 			goto out;
 		if (qc_append_handle(hosthdl, &guesthdl, guesttype))
-			goto out;
-		if (qc_set_attr_string(hosthdl, qc_control_program_id, str_buf, 16, ATTR_SRC_SYSINFO) ||
-		    qc_set_attr_string(guesthdl, qc_layer_name, layer_name, 8, ATTR_SRC_SYSINFO))
-			goto out;
+			goto out_err;
+		if (qc_set_attr_string(hosthdl, qc_control_program_id, str_buf, ATTR_SRC_SYSINFO) ||
+		    qc_set_attr_string(guesthdl, qc_layer_name, layer_name, ATTR_SRC_SYSINFO))
+			goto out_err;
 		for (sysi = NULL, *line = strtok_r(sysi, qc_sysinfo_delim, sptr); *line;
 		     *line = strtok_r(sysi, qc_sysinfo_delim, sptr)) {
 			if (strncmp(*line, vmxx, 4) != 0)
@@ -266,7 +270,10 @@ static int qc_fill_in_sysinfo_values_vm(struct qc_handle *hdl, char **sptr, char
 		}
 	}
 	rc = 0;
+	goto out;
 
+out_err:
+	rc = -1;
 out:
 	qc_debug_indent_dec();
 
@@ -355,6 +362,10 @@ static int qc_fill_in_sysinfo_values_lpar(struct qc_handle *hdl, char **sptr, ch
 			*i = MIN(ps_mtid, *i);
 	}
 
+	goto out;
+
+out_err:
+	rc = -1;
 out:
 	qc_debug_indent_dec();
 
@@ -370,8 +381,8 @@ static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char **sptr, cha
 	qc_debug_indent_inc();
 	if (qc_set_attr_int(hdl, qc_layer_type_num, QC_LAYER_TYPE_CEC, ATTR_SRC_SYSINFO) ||
 	    qc_set_attr_int(hdl, qc_layer_category_num, QC_LAYER_CAT_HOST, ATTR_SRC_SYSINFO) ||
-	    qc_set_attr_string(hdl, qc_layer_type, "CEC", sizeof("CEC"), ATTR_SRC_SYSINFO) ||
-	    qc_set_attr_string(hdl, qc_layer_category, "HOST", sizeof("HOST"), ATTR_SRC_SYSINFO))
+	    qc_set_attr_string(hdl, qc_layer_type, "CEC", ATTR_SRC_SYSINFO) ||
+	    qc_set_attr_string(hdl, qc_layer_category, "HOST", ATTR_SRC_SYSINFO))
 		goto out;
 	for (; *line && strncmp(*line, "LPAR", 4); *line = strtok_r(sysi, qc_sysinfo_delim, sptr)) {
 		sysi = NULL;
@@ -379,6 +390,7 @@ static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char **sptr, cha
 			continue;	// Lots of "Adjustment" lines that we can skip
 		QC_SYSINFO_PARSE_LINE_STR(hdl, "Manufacturer: %16s", 16, qc_manufacturer);
 		QC_SYSINFO_PARSE_LINE_STR(hdl, "Type: %4s", 4, qc_type);
+		QC_SYSINFO_PARSE_LINE_STR(hdl, "LIC Identifier: %16s", 16, qc_lic_identifier);
 		if (strncmp(*line, "Model: ", 7) == 0) {
 			*line += 7;
 			QC_SYSINFO_PARSE_LINE_STR_NOCONT(hdl, "%16s", 16, qc_model_capacity);
@@ -405,7 +417,10 @@ static int qc_fill_in_sysinfo_values_cec(struct qc_handle *hdl, char **sptr, cha
 		QC_SYSINFO_PARSE_LINE_FLOAT(hdl, "Secondary Capability: %f", qc_secondary_capability);
 	}
 	rc = 0;
+	goto out;
 
+out_err:
+	rc = -1;
 out:
 	qc_debug_indent_dec();
 

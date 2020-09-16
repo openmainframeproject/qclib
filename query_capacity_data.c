@@ -1,9 +1,5 @@
-/* Copyright IBM Corp. 2013, 2018 */
+/* Copyright IBM Corp. 2013, 2020 */
 
-//_GNU_SOURCE used for getline and posix_memalign
-#define _GNU_SOURCE
-#include <unistd.h>
-#include <sys/stat.h>
 #include "query_capacity_data.h"
 
 
@@ -13,22 +9,66 @@
  *
  * Note that strings (char pointers) carry the trailing zero byte.
  */
+ #define QC_LEN_CAPPING			  5
+ #define QC_LEN_CLUSTER_NAME		  9
+ #define QC_LEN_CONTROL_PROGRAM_ID	 17
+ #define QC_LEN_LAYER_CATEGORY		  6
+ #define QC_LEN_LAYER_EXTENDED_NAME	257
+ #define QC_LEN_LAYER_NAME		  9
+ #define QC_LEN_LAYER_TYPE		 27
+ #define QC_LEN_LAYER_UUID		 37
+ #define QC_LEN_LIC_IDENTIFIER		 17
+ #define QC_LEN_MANUFACTURER		 17
+ #define QC_LEN_MODEL			 17
+ #define QC_LEN_MODEL_CAPACITY		 17
+ #define QC_LEN_PARTITION_CHAR		 26
+ #define QC_LEN_PLANT		 	  5
+ #define QC_LEN_SEQUENCE_CODE		 17
+ #define QC_LEN_TYPE			 17
+ #define QC_LEN_TYPE_NAME		 31
 
-#define QC_LAYER_TYPE_LEN 20
-#define QC_LAYER_CAT_LEN   6
+// Returns length of string attributes as defined in the respective struct
+static unsigned int qc_get_str_attr_len(enum qc_attr_id id) {
+	switch (id) {
+		case qc_capping: return QC_LEN_CAPPING;
+		case qc_cluster_name: return QC_LEN_CLUSTER_NAME;
+		case qc_control_program_id: return QC_LEN_CONTROL_PROGRAM_ID;
+		case qc_layer_category: return QC_LEN_LAYER_CATEGORY;
+		case qc_layer_extended_name: return QC_LEN_LAYER_EXTENDED_NAME;
+		case qc_layer_name: return QC_LEN_LAYER_NAME;
+		case qc_layer_type: return QC_LEN_LAYER_TYPE;
+		case qc_layer_uuid: return QC_LEN_LAYER_UUID;
+		case qc_lic_identifier: return QC_LEN_LIC_IDENTIFIER;
+		case qc_manufacturer: return QC_LEN_MANUFACTURER;
+		case qc_model: return QC_LEN_MODEL;
+		case qc_model_capacity: return QC_LEN_MODEL_CAPACITY;
+		case qc_partition_char: return QC_LEN_PARTITION_CHAR;
+		case qc_plant: return QC_LEN_PLANT;
+		case qc_sequence_code: return QC_LEN_SEQUENCE_CODE;
+		case qc_type: return QC_LEN_TYPE;
+		case qc_type_name: return QC_LEN_TYPE_NAME;
+		default: break;
+	}
 
-struct qc_cec_values {
+	return 0;
+}
+
+
+struct qc_cec {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char layer_name[9];
-	char manufacturer[17];
-	char type[5];
-	char model_capacity[17];
-	char model[17];
-	char sequence_code[17];
-	char plant[5];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char manufacturer[QC_LEN_MANUFACTURER];
+	char type[QC_LEN_TYPE];
+	char model_capacity[QC_LEN_MODEL_CAPACITY];
+	char model[QC_LEN_MODEL];
+	char type_name[QC_LEN_TYPE_NAME];
+	int type_family;
+	char sequence_code[QC_LEN_SEQUENCE_CODE];
+	char lic_identifier[QC_LEN_LIC_IDENTIFIER];
+	char plant[QC_LEN_PLANT];
 	int num_core_total;
 	int num_core_configured;
 	int num_core_standby;
@@ -41,8 +81,12 @@ struct qc_cec_values {
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
+	int num_ziip_total;
+	int num_ziip_dedicated;
+	int num_ziip_shared;
 	int num_cp_threads;
 	int num_ifl_threads;
+	int num_ziip_threads;
 	float capability;
 	float secondary_capability;
 	int capacity_adjustment_indication;
@@ -52,31 +96,34 @@ struct qc_cec_values {
 /*
  * valid attributes for a layer, where "layer-type"=="LPAR-Group"
  */
-struct qc_lpar_group_values {
+struct qc_lpar_group {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char layer_name[9];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
 	int cp_absolute_capping;
 	int ifl_absolute_capping;
+	int ziip_absolute_capping;
 };
 
 /*
  * valid attributes for a layer, where "layer-type"=="LPAR"
  */
-struct qc_lpar_values {
+struct qc_lpar {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
 	int partition_number;
-	char partition_char[26];
+	char partition_char[QC_LEN_PARTITION_CHAR];
 	int partition_char_num;
-	char layer_name[9];
-	char layer_extended_name[257];
-	char layer_uuid[37];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char layer_extended_name[QC_LEN_LAYER_EXTENDED_NAME];
+	char layer_uuid[QC_LEN_LAYER_UUID];
 	int adjustment;
+	int has_secure;
+	int secure;
 	int num_core_total;
 	int num_core_configured;
 	int num_core_standby;
@@ -89,38 +136,47 @@ struct qc_lpar_values {
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
+	int num_ziip_total;
+	int num_ziip_dedicated;
+	int num_ziip_shared;
 	int num_cp_threads;
 	int num_ifl_threads;
+	int num_ziip_threads;
 	int cp_absolute_capping;
 	int ifl_absolute_capping;
+	int ziip_absolute_capping;
 	int cp_weight_capping;
 	int ifl_weight_capping;
+	int ziip_weight_capping;
 };
 
-struct qc_zvm_pool_values {
+struct qc_zvm_pool {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char layer_name[9];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
 	int cp_limithard_cap;
 	int cp_capacity_cap;
 	int ifl_limithard_cap;
 	int ifl_capacity_cap;
+	int ziip_limithard_cap;
+	int ziip_capacity_cap;
 	int cp_capped_capacity;
 	int ifl_capped_capacity;
+	int ziip_capped_capacity;
 };
 
-struct qc_zvm_hypervisor_values {
+struct qc_zvm_hypervisor {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char layer_name[9];
-	char cluster_name[9];
-	char control_program_id[17];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char cluster_name[QC_LEN_CLUSTER_NAME];
+	char control_program_id[QC_LEN_CONTROL_PROGRAM_ID];
 	int adjustment;
-	int hardlimit_consumption;
+	int limithard_consumption;
 	int prorated_core_time;
 	int num_core_total;
 	int num_core_dedicated;
@@ -131,22 +187,25 @@ struct qc_zvm_hypervisor_values {
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
+	int num_ziip_total;
+	int num_ziip_dedicated;
+	int num_ziip_shared;
 	int num_cp_threads;
 	int num_ifl_threads;
+	int num_ziip_threads;
 };
 
-struct qc_zvm_guest_values {
+struct qc_zvm_guest {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char layer_name[9];
-	char system_identifier[9];
-	char cluster_name[9];
-	char control_program_id[17];
-	int adjustment;
-	char capping[5];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char capping[QC_LEN_CAPPING];
 	int capping_num;
+        int mobility_enabled;
+        int has_secure;
+        int secure;
 	int num_cpu_total;
 	int num_cpu_configured;
 	int num_cpu_standby;
@@ -159,7 +218,9 @@ struct qc_zvm_guest_values {
 	int num_ifl_total;
 	int num_ifl_dedicated;
 	int num_ifl_shared;
-	int mobility_enabled;
+	int num_ziip_total;
+	int num_ziip_dedicated;
+	int num_ziip_shared;
 	int has_multiple_cpu_types;
 	int cp_dispatch_limithard;
 	int cp_dispatch_type;
@@ -167,14 +228,84 @@ struct qc_zvm_guest_values {
 	int ifl_dispatch_limithard;
 	int ifl_dispatch_type;
 	int ifl_capped_capacity;
+	int ziip_dispatch_limithard;
+	int ziip_dispatch_type;
+	int ziip_capped_capacity;
 };
 
-struct qc_kvm_hypervisor_values {
+struct qc_zos_hypervisor {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char control_program_id[17];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char cluster_name[QC_LEN_CLUSTER_NAME];
+	char control_program_id[QC_LEN_CONTROL_PROGRAM_ID];
+	int adjustment;
+	int num_core_total;
+	int num_core_dedicated;
+	int num_core_shared;
+	int num_cp_total;
+	int num_cp_dedicated;
+	int num_cp_shared;
+	int num_ziip_total;
+	int num_ziip_dedicated;
+	int num_ziip_shared;
+	int num_cp_threads;
+	int num_ziip_threads;
+};
+
+struct qc_zos_tenant_resource_group {
+	int layer_type_num;
+	int layer_category_num;
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	int cp_limithard_cap;
+	int cp_capacity_cap;
+	int cp_capped_capacity;
+	int ziip_limithard_cap;
+	int ziip_capacity_cap;
+	int ziip_capped_capacity;
+};
+
+struct qc_zos_zcx_server {
+	int layer_type_num;
+	int layer_category_num;
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char capping[QC_LEN_CAPPING];
+	int capping_num;
+        int has_secure;
+        int secure;
+	int num_cpu_total;
+	int num_cpu_configured;
+	int num_cpu_standby;
+	int num_cpu_reserved;
+	int num_cpu_dedicated;
+	int num_cpu_shared;
+	int num_cp_total;
+	int num_cp_dedicated;
+	int num_cp_shared;
+	int num_ziip_total;
+	int num_ziip_dedicated;
+	int num_ziip_shared;
+	int has_multiple_cpu_types;
+	int cp_dispatch_limithard;
+	int cp_dispatch_type;
+	int cp_capped_capacity;
+	int ziip_dispatch_limithard;
+	int ziip_dispatch_type;
+	int ziip_capped_capacity;
+};
+
+struct qc_kvm_hypervisor {
+	int layer_type_num;
+	int layer_category_num;
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char control_program_id[QC_LEN_CONTROL_PROGRAM_ID];
 	int adjustment;
 	int num_core_total;
 	int num_core_dedicated;
@@ -187,14 +318,16 @@ struct qc_kvm_hypervisor_values {
 	int num_ifl_shared;
 };
 
-struct qc_kvm_guest_values {
+struct qc_kvm_guest {
 	int layer_type_num;
 	int layer_category_num;
-	char layer_type[QC_LAYER_TYPE_LEN];
-	char layer_category[QC_LAYER_CAT_LEN];
-	char layer_name[9];
-	char layer_extended_name[257];
-	char layer_uuid[37];
+	char layer_type[QC_LEN_LAYER_TYPE];
+	char layer_category[QC_LEN_LAYER_CATEGORY];
+	char layer_name[QC_LEN_LAYER_NAME];
+	char layer_extended_name[QC_LEN_LAYER_EXTENDED_NAME];
+	char layer_uuid[QC_LEN_LAYER_UUID];
+        int has_secure;
+        int secure;
 	int num_cpu_total;
 	int num_cpu_configured;
 	int num_cpu_standby;
@@ -220,190 +353,293 @@ struct qc_attr {
 };
 
 static struct qc_attr cec_attrs[]  =  {
-	{qc_layer_type_num, integer, offsetof(struct qc_cec_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_cec_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_cec_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_cec_values, layer_category)},
-	{qc_layer_name, string, offsetof(struct qc_cec_values, layer_name)},
-	{qc_manufacturer, string, offsetof(struct qc_cec_values, manufacturer)},
-	{qc_type, string, offsetof(struct qc_cec_values, type)},
-	{qc_model_capacity, string, offsetof(struct qc_cec_values, model_capacity)},
-	{qc_model, string, offsetof(struct qc_cec_values, model)},
-	{qc_sequence_code, string, offsetof(struct qc_cec_values, sequence_code)},
-	{qc_plant, string, offsetof(struct qc_cec_values, plant)},
-	{qc_num_core_total, integer, offsetof(struct qc_cec_values, num_core_total)},
-	{qc_num_core_configured, integer, offsetof(struct qc_cec_values, num_core_configured)},
-	{qc_num_core_standby, integer, offsetof(struct qc_cec_values, num_core_standby)},
-	{qc_num_core_reserved, integer, offsetof(struct qc_cec_values, num_core_reserved)},
-	{qc_num_core_dedicated, integer, offsetof(struct qc_cec_values, num_core_dedicated)},
-	{qc_num_core_shared, integer, offsetof(struct qc_cec_values, num_core_shared)},
-	{qc_num_cp_total, integer, offsetof(struct qc_cec_values, num_cp_total)},
-	{qc_num_cp_dedicated, integer, offsetof(struct qc_cec_values, num_cp_dedicated)},
-	{qc_num_cp_shared, integer, offsetof(struct qc_cec_values, num_cp_shared)},
-	{qc_num_ifl_total, integer, offsetof(struct qc_cec_values, num_ifl_total)},
-	{qc_num_ifl_dedicated, integer, offsetof(struct qc_cec_values, num_ifl_dedicated)},
-	{qc_num_ifl_shared, integer, offsetof(struct qc_cec_values, num_ifl_shared)},
-	{qc_num_cp_threads, integer, offsetof(struct qc_cec_values, num_cp_threads)},
-	{qc_num_ifl_threads, integer, offsetof(struct qc_cec_values, num_ifl_threads)},
-	{qc_capability, floatingpoint, offsetof(struct qc_cec_values, capability)},
-	{qc_secondary_capability, floatingpoint, offsetof(struct qc_cec_values, secondary_capability)},
-	{qc_capacity_adjustment_indication, integer, offsetof(struct qc_cec_values, capacity_adjustment_indication)},
-	{qc_capacity_change_reason, integer, offsetof(struct qc_cec_values, capacity_change_reason)},
+	{qc_layer_type_num, integer, offsetof(struct qc_cec, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_cec, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_cec, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_cec, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_cec, layer_name)},
+	{qc_manufacturer, string, offsetof(struct qc_cec, manufacturer)},
+	{qc_type, string, offsetof(struct qc_cec, type)},
+	{qc_model_capacity, string, offsetof(struct qc_cec, model_capacity)},
+	{qc_model, string, offsetof(struct qc_cec, model)},
+	{qc_type_name, string, offsetof(struct qc_cec, type_name)},
+	{qc_type_family, integer, offsetof(struct qc_cec, type_family)},
+	{qc_sequence_code, string, offsetof(struct qc_cec, sequence_code)},
+	{qc_lic_identifier, string, offsetof(struct qc_cec, lic_identifier)},
+	{qc_plant, string, offsetof(struct qc_cec, plant)},
+	{qc_num_core_total, integer, offsetof(struct qc_cec, num_core_total)},
+	{qc_num_core_configured, integer, offsetof(struct qc_cec, num_core_configured)},
+	{qc_num_core_standby, integer, offsetof(struct qc_cec, num_core_standby)},
+	{qc_num_core_reserved, integer, offsetof(struct qc_cec, num_core_reserved)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_cec, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_cec, num_core_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_cec, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_cec, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_cec, num_cp_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_cec, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_cec, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_cec, num_ifl_shared)},
+	{qc_num_ziip_total, integer, offsetof(struct qc_cec, num_ziip_total)},
+	{qc_num_ziip_dedicated, integer, offsetof(struct qc_cec, num_ziip_dedicated)},
+	{qc_num_ziip_shared, integer, offsetof(struct qc_cec, num_ziip_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_cec, num_cp_threads)},
+	{qc_num_ifl_threads, integer, offsetof(struct qc_cec, num_ifl_threads)},
+	{qc_num_ziip_threads, integer, offsetof(struct qc_cec, num_ziip_threads)},
+	{qc_capability, floatingpoint, offsetof(struct qc_cec, capability)},
+	{qc_secondary_capability, floatingpoint, offsetof(struct qc_cec, secondary_capability)},
+	{qc_capacity_adjustment_indication, integer, offsetof(struct qc_cec, capacity_adjustment_indication)},
+	{qc_capacity_change_reason, integer, offsetof(struct qc_cec, capacity_change_reason)},
 	{-1, string, -1}
 };
 
 static struct qc_attr lpar_group_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_lpar_group_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_lpar_group_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_lpar_group_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_lpar_group_values, layer_category)},
-	{qc_layer_name, string, offsetof(struct qc_lpar_group_values, layer_name)},
-	{qc_cp_absolute_capping, integer, offsetof(struct qc_lpar_group_values, cp_absolute_capping)},
-	{qc_ifl_absolute_capping, integer, offsetof(struct qc_lpar_group_values, ifl_absolute_capping)},
+	{qc_layer_type_num, integer, offsetof(struct qc_lpar_group, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_lpar_group, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_lpar_group, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_lpar_group, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_lpar_group, layer_name)},
+	{qc_cp_absolute_capping, integer, offsetof(struct qc_lpar_group, cp_absolute_capping)},
+	{qc_ifl_absolute_capping, integer, offsetof(struct qc_lpar_group, ifl_absolute_capping)},
+	{qc_ziip_absolute_capping, integer, offsetof(struct qc_lpar_group, ziip_absolute_capping)},
 	{-1, string, -1}
 };
 
 static struct qc_attr lpar_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_lpar_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_lpar_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_lpar_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_lpar_values, layer_category)},
-	{qc_partition_number, integer, offsetof(struct qc_lpar_values, partition_number)},
-	{qc_partition_char, string, offsetof(struct qc_lpar_values, partition_char)},
-	{qc_partition_char_num, integer, offsetof(struct qc_lpar_values, partition_char_num)},
-	{qc_layer_name, string, offsetof(struct qc_lpar_values, layer_name)},
-	{qc_layer_extended_name, string, offsetof(struct qc_lpar_values, layer_extended_name)},
-	{qc_layer_uuid, string, offsetof(struct qc_lpar_values, layer_uuid)},
-	{qc_adjustment, integer, offsetof(struct qc_lpar_values, adjustment)},
-	{qc_num_core_total, integer, offsetof(struct qc_lpar_values, num_core_total)},
-	{qc_num_core_configured, integer, offsetof(struct qc_lpar_values, num_core_configured)},
-	{qc_num_core_standby, integer, offsetof(struct qc_lpar_values, num_core_standby)},
-	{qc_num_core_reserved, integer, offsetof(struct qc_lpar_values, num_core_reserved)},
-	{qc_num_core_dedicated, integer, offsetof(struct qc_lpar_values, num_core_dedicated)},
-	{qc_num_core_shared, integer, offsetof(struct qc_lpar_values, num_core_shared)},
-	{qc_num_cp_total, integer, offsetof(struct qc_lpar_values, num_cp_total)},
-	{qc_num_cp_dedicated, integer, offsetof(struct qc_lpar_values, num_cp_dedicated)},
-	{qc_num_cp_shared, integer, offsetof(struct qc_lpar_values, num_cp_shared)},
-	{qc_num_ifl_total, integer, offsetof(struct qc_lpar_values, num_ifl_total)},
-	{qc_num_ifl_dedicated, integer, offsetof(struct qc_lpar_values, num_ifl_dedicated)},
-	{qc_num_ifl_shared, integer, offsetof(struct qc_lpar_values, num_ifl_shared)},
-	{qc_num_cp_threads, integer, offsetof(struct qc_lpar_values, num_cp_threads)},
-	{qc_num_ifl_threads, integer, offsetof(struct qc_lpar_values, num_ifl_threads)},
-	{qc_cp_absolute_capping, integer, offsetof(struct qc_lpar_values, cp_absolute_capping)},
-	{qc_ifl_absolute_capping, integer, offsetof(struct qc_lpar_values, ifl_absolute_capping)},
-	{qc_cp_weight_capping, integer, offsetof(struct qc_lpar_values, cp_weight_capping)},
-	{qc_ifl_weight_capping, integer, offsetof(struct qc_lpar_values, ifl_weight_capping)},
+	{qc_layer_type_num, integer, offsetof(struct qc_lpar, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_lpar, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_lpar, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_lpar, layer_category)},
+	{qc_partition_number, integer, offsetof(struct qc_lpar, partition_number)},
+	{qc_partition_char, string, offsetof(struct qc_lpar, partition_char)},
+	{qc_partition_char_num, integer, offsetof(struct qc_lpar, partition_char_num)},
+	{qc_layer_name, string, offsetof(struct qc_lpar, layer_name)},
+	{qc_layer_extended_name, string, offsetof(struct qc_lpar, layer_extended_name)},
+	{qc_layer_uuid, string, offsetof(struct qc_lpar, layer_uuid)},
+	{qc_adjustment, integer, offsetof(struct qc_lpar, adjustment)},
+        {qc_has_secure, integer, offsetof(struct qc_lpar, has_secure)},
+        {qc_secure, integer, offsetof(struct qc_lpar, secure)},
+	{qc_num_core_total, integer, offsetof(struct qc_lpar, num_core_total)},
+	{qc_num_core_configured, integer, offsetof(struct qc_lpar, num_core_configured)},
+	{qc_num_core_standby, integer, offsetof(struct qc_lpar, num_core_standby)},
+	{qc_num_core_reserved, integer, offsetof(struct qc_lpar, num_core_reserved)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_lpar, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_lpar, num_core_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_lpar, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_lpar, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_lpar, num_cp_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_lpar, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_lpar, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_lpar, num_ifl_shared)},
+	{qc_num_ziip_total, integer, offsetof(struct qc_lpar, num_ziip_total)},
+	{qc_num_ziip_dedicated, integer, offsetof(struct qc_lpar, num_ziip_dedicated)},
+	{qc_num_ziip_shared, integer, offsetof(struct qc_lpar, num_ziip_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_lpar, num_cp_threads)},
+	{qc_num_ifl_threads, integer, offsetof(struct qc_lpar, num_ifl_threads)},
+	{qc_num_ziip_threads, integer, offsetof(struct qc_lpar, num_ziip_threads)},
+	{qc_cp_absolute_capping, integer, offsetof(struct qc_lpar, cp_absolute_capping)},
+	{qc_ifl_absolute_capping, integer, offsetof(struct qc_lpar, ifl_absolute_capping)},
+	{qc_ziip_absolute_capping, integer, offsetof(struct qc_lpar, ziip_absolute_capping)},
+	{qc_cp_weight_capping, integer, offsetof(struct qc_lpar, cp_weight_capping)},
+	{qc_ifl_weight_capping, integer, offsetof(struct qc_lpar, ifl_weight_capping)},
+	{qc_ziip_weight_capping, integer, offsetof(struct qc_lpar, ziip_weight_capping)},
 	{-1, string, -1}
 };
 
 static struct qc_attr zvm_hv_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_zvm_hypervisor_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_zvm_hypervisor_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_zvm_hypervisor_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_zvm_hypervisor_values, layer_category)},
-	{qc_layer_name, string, offsetof(struct qc_zvm_hypervisor_values, layer_name)},
-	{qc_cluster_name, string, offsetof(struct qc_zvm_hypervisor_values, cluster_name)},
-	{qc_control_program_id, string, offsetof(struct qc_zvm_hypervisor_values, control_program_id)},
-	{qc_adjustment, integer, offsetof(struct qc_zvm_hypervisor_values, adjustment)},
-	{qc_hardlimit_consumption, integer, offsetof(struct qc_zvm_hypervisor_values, hardlimit_consumption)},
-	{qc_prorated_core_time, integer, offsetof(struct qc_zvm_hypervisor_values, prorated_core_time)},
-	{qc_num_core_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_core_total)},
-	{qc_num_core_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_core_dedicated)},
-	{qc_num_core_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_core_shared)},
-	{qc_num_cp_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_total)},
-	{qc_num_cp_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_dedicated)},
-	{qc_num_cp_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_shared)},
-	{qc_num_ifl_total, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_total)},
-	{qc_num_ifl_dedicated, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_dedicated)},
-	{qc_num_ifl_shared, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_shared)},
-	{qc_num_cp_threads, integer, offsetof(struct qc_zvm_hypervisor_values, num_cp_threads)},
-	{qc_num_ifl_threads, integer, offsetof(struct qc_zvm_hypervisor_values, num_ifl_threads)},
+	{qc_layer_type_num, integer, offsetof(struct qc_zvm_hypervisor, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_zvm_hypervisor, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_zvm_hypervisor, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_zvm_hypervisor, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_zvm_hypervisor, layer_name)},
+	{qc_cluster_name, string, offsetof(struct qc_zvm_hypervisor, cluster_name)},
+	{qc_control_program_id, string, offsetof(struct qc_zvm_hypervisor, control_program_id)},
+	{qc_adjustment, integer, offsetof(struct qc_zvm_hypervisor, adjustment)},
+	{qc_limithard_consumption, integer, offsetof(struct qc_zvm_hypervisor, limithard_consumption)},
+	{qc_prorated_core_time, integer, offsetof(struct qc_zvm_hypervisor, prorated_core_time)},
+	{qc_num_core_total, integer, offsetof(struct qc_zvm_hypervisor, num_core_total)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_zvm_hypervisor, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_zvm_hypervisor, num_core_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_zvm_hypervisor, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_zvm_hypervisor, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_zvm_hypervisor, num_cp_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_zvm_hypervisor, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_zvm_hypervisor, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_zvm_hypervisor, num_ifl_shared)},
+	{qc_num_ziip_total, integer, offsetof(struct qc_zvm_hypervisor, num_ziip_total)},
+	{qc_num_ziip_dedicated, integer, offsetof(struct qc_zvm_hypervisor, num_ziip_dedicated)},
+	{qc_num_ziip_shared, integer, offsetof(struct qc_zvm_hypervisor, num_ziip_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_zvm_hypervisor, num_cp_threads)},
+	{qc_num_ifl_threads, integer, offsetof(struct qc_zvm_hypervisor, num_ifl_threads)},
+	{qc_num_ziip_threads, integer, offsetof(struct qc_zvm_hypervisor, num_ziip_threads)},
+	{-1, string, -1}
+};
+
+static struct qc_attr zos_hv_attrs[] = {
+	{qc_layer_type_num, integer, offsetof(struct qc_zos_hypervisor, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_zos_hypervisor, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_zos_hypervisor, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_zos_hypervisor, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_zos_hypervisor, layer_name)},
+	{qc_cluster_name, string, offsetof(struct qc_zos_hypervisor, cluster_name)},
+	{qc_control_program_id, string, offsetof(struct qc_zos_hypervisor, control_program_id)},
+	{qc_adjustment, integer, offsetof(struct qc_zos_hypervisor, adjustment)},
+	{qc_num_core_total, integer, offsetof(struct qc_zos_hypervisor, num_core_total)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_zos_hypervisor, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_zos_hypervisor, num_core_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_zos_hypervisor, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_zos_hypervisor, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_zos_hypervisor, num_cp_shared)},
+	{qc_num_ziip_total, integer, offsetof(struct qc_zos_hypervisor, num_ziip_total)},
+	{qc_num_ziip_dedicated, integer, offsetof(struct qc_zos_hypervisor, num_ziip_dedicated)},
+	{qc_num_ziip_shared, integer, offsetof(struct qc_zos_hypervisor, num_ziip_shared)},
+	{qc_num_cp_threads, integer, offsetof(struct qc_zos_hypervisor, num_cp_threads)},
+	{qc_num_ziip_threads, integer, offsetof(struct qc_zos_hypervisor, num_ziip_threads)},
+	{-1, string, -1}
+};
+
+static struct qc_attr zos_tenant_resgroup_attrs[] = {
+	{qc_layer_type_num, integer, offsetof(struct qc_zos_tenant_resource_group, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_zos_tenant_resource_group, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_zos_tenant_resource_group, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_zos_tenant_resource_group, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_zos_tenant_resource_group, layer_name)},
+	{qc_cp_limithard_cap, integer, offsetof(struct qc_zos_tenant_resource_group, cp_limithard_cap)},
+	{qc_cp_capacity_cap, integer, offsetof(struct qc_zos_tenant_resource_group, cp_capacity_cap)},
+	{qc_ziip_limithard_cap, integer, offsetof(struct qc_zos_tenant_resource_group, ziip_limithard_cap)},
+	{qc_ziip_capacity_cap, integer, offsetof(struct qc_zos_tenant_resource_group, ziip_capacity_cap)},
+	{qc_cp_capped_capacity, integer, offsetof(struct qc_zos_tenant_resource_group, cp_capped_capacity)},
+	{qc_ziip_capped_capacity, integer, offsetof(struct qc_zos_tenant_resource_group, ziip_capped_capacity)},
 	{-1, string, -1}
 };
 
 static struct qc_attr kvm_hv_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_kvm_hypervisor_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_kvm_hypervisor_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_kvm_hypervisor_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_kvm_hypervisor_values, layer_category)},
-	{qc_control_program_id, string, offsetof(struct qc_kvm_hypervisor_values, control_program_id)},
-	{qc_adjustment, integer, offsetof(struct qc_kvm_hypervisor_values, adjustment)},
-	{qc_num_core_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_core_total)},
-	{qc_num_core_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_core_dedicated)},
-	{qc_num_core_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_core_shared)},
-	{qc_num_cp_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_total)},
-	{qc_num_cp_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_dedicated)},
-	{qc_num_cp_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_cp_shared)},
-	{qc_num_ifl_total, integer, offsetof(struct qc_kvm_hypervisor_values, num_ifl_total)},
-	{qc_num_ifl_dedicated, integer, offsetof(struct qc_kvm_hypervisor_values, num_ifl_dedicated)},
-	{qc_num_ifl_shared, integer, offsetof(struct qc_kvm_hypervisor_values, num_ifl_shared)},
+	{qc_layer_type_num, integer, offsetof(struct qc_kvm_hypervisor, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_kvm_hypervisor, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_kvm_hypervisor, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_kvm_hypervisor, layer_category)},
+	{qc_control_program_id, string, offsetof(struct qc_kvm_hypervisor, control_program_id)},
+	{qc_adjustment, integer, offsetof(struct qc_kvm_hypervisor, adjustment)},
+	{qc_num_core_total, integer, offsetof(struct qc_kvm_hypervisor, num_core_total)},
+	{qc_num_core_dedicated, integer, offsetof(struct qc_kvm_hypervisor, num_core_dedicated)},
+	{qc_num_core_shared, integer, offsetof(struct qc_kvm_hypervisor, num_core_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_kvm_hypervisor, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_kvm_hypervisor, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_kvm_hypervisor, num_cp_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_kvm_hypervisor, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_kvm_hypervisor, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_kvm_hypervisor, num_ifl_shared)},
 	{-1, string, -1}
 };
 
 static struct qc_attr zvm_pool_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_zvm_pool_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_zvm_pool_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_zvm_pool_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_zvm_pool_values, layer_category)},
-	{qc_layer_name, string, offsetof(struct qc_zvm_pool_values, layer_name)},
-	{qc_cp_limithard_cap, integer, offsetof(struct qc_zvm_pool_values, cp_limithard_cap)},
-	{qc_cp_capacity_cap, integer, offsetof(struct qc_zvm_pool_values, cp_capacity_cap)},
-	{qc_ifl_limithard_cap, integer, offsetof(struct qc_zvm_pool_values, ifl_limithard_cap)},
-	{qc_ifl_capacity_cap, integer, offsetof(struct qc_zvm_pool_values, ifl_capacity_cap)},
-	{qc_cp_capped_capacity, integer, offsetof(struct qc_zvm_pool_values, cp_capped_capacity)},
-	{qc_ifl_capped_capacity, integer, offsetof(struct qc_zvm_pool_values, ifl_capped_capacity)},
+	{qc_layer_type_num, integer, offsetof(struct qc_zvm_pool, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_zvm_pool, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_zvm_pool, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_zvm_pool, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_zvm_pool, layer_name)},
+	{qc_cp_limithard_cap, integer, offsetof(struct qc_zvm_pool, cp_limithard_cap)},
+	{qc_cp_capacity_cap, integer, offsetof(struct qc_zvm_pool, cp_capacity_cap)},
+	{qc_ifl_limithard_cap, integer, offsetof(struct qc_zvm_pool, ifl_limithard_cap)},
+	{qc_ifl_capacity_cap, integer, offsetof(struct qc_zvm_pool, ifl_capacity_cap)},
+	{qc_ziip_limithard_cap, integer, offsetof(struct qc_zvm_pool, ziip_limithard_cap)},
+	{qc_ziip_capacity_cap, integer, offsetof(struct qc_zvm_pool, ziip_capacity_cap)},
+	{qc_cp_capped_capacity, integer, offsetof(struct qc_zvm_pool, cp_capped_capacity)},
+	{qc_ifl_capped_capacity, integer, offsetof(struct qc_zvm_pool, ifl_capped_capacity)},
+	{qc_ziip_capped_capacity, integer, offsetof(struct qc_zvm_pool, ziip_capped_capacity)},
 	{-1, string, -1}
 };
 
 static struct qc_attr zvm_guest_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_zvm_guest_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_zvm_guest_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_zvm_guest_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_zvm_guest_values, layer_category)},
-	{qc_layer_name, string, offsetof(struct qc_zvm_guest_values, layer_name)},
-	{qc_capping, string, offsetof(struct qc_zvm_guest_values, capping)},
-	{qc_capping_num, integer, offsetof(struct qc_zvm_guest_values, capping_num)},
-	{qc_num_cpu_total, integer, offsetof(struct qc_zvm_guest_values, num_cpu_total)},
-	{qc_num_cpu_configured, integer, offsetof(struct qc_zvm_guest_values, num_cpu_configured)},
-	{qc_num_cpu_standby, integer, offsetof(struct qc_zvm_guest_values, num_cpu_standby)},
-	{qc_num_cpu_reserved, integer, offsetof(struct qc_zvm_guest_values, num_cpu_reserved)},
-	{qc_num_cpu_dedicated, integer, offsetof(struct qc_zvm_guest_values, num_cpu_dedicated)},
-	{qc_num_cpu_shared, integer, offsetof(struct qc_zvm_guest_values, num_cpu_shared)},
-	{qc_num_cp_total, integer, offsetof(struct qc_zvm_guest_values, num_cp_total)},
-	{qc_num_cp_dedicated, integer, offsetof(struct qc_zvm_guest_values, num_cp_dedicated)},
-	{qc_num_cp_shared, integer, offsetof(struct qc_zvm_guest_values, num_cp_shared)},
-	{qc_num_ifl_total, integer, offsetof(struct qc_zvm_guest_values, num_ifl_total)},
-	{qc_num_ifl_dedicated, integer, offsetof(struct qc_zvm_guest_values, num_ifl_dedicated)},
-	{qc_num_ifl_shared, integer, offsetof(struct qc_zvm_guest_values, num_ifl_shared)},
-	{qc_mobility_enabled, integer, offsetof(struct qc_zvm_guest_values, mobility_enabled)},
-	{qc_has_multiple_cpu_types, integer, offsetof(struct qc_zvm_guest_values, has_multiple_cpu_types)},
-	{qc_cp_dispatch_limithard, integer, offsetof(struct qc_zvm_guest_values, cp_dispatch_limithard)},
-	{qc_cp_capped_capacity, integer, offsetof(struct qc_zvm_guest_values, cp_capped_capacity)},
-	{qc_ifl_dispatch_limithard, integer, offsetof(struct qc_zvm_guest_values, ifl_dispatch_limithard)},
-	{qc_ifl_capped_capacity, integer, offsetof(struct qc_zvm_guest_values, ifl_capped_capacity)},
-	{qc_cp_dispatch_type, integer, offsetof(struct qc_zvm_guest_values, cp_dispatch_type)},
-	{qc_ifl_dispatch_type, integer, offsetof(struct qc_zvm_guest_values, ifl_dispatch_type)},
+	{qc_layer_type_num, integer, offsetof(struct qc_zvm_guest, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_zvm_guest, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_zvm_guest, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_zvm_guest, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_zvm_guest, layer_name)},
+	{qc_capping, string, offsetof(struct qc_zvm_guest, capping)},
+	{qc_capping_num, integer, offsetof(struct qc_zvm_guest, capping_num)},
+        {qc_mobility_enabled, integer, offsetof(struct qc_zvm_guest, mobility_enabled)},
+        {qc_has_secure, integer, offsetof(struct qc_zvm_guest, has_secure)},
+        {qc_secure, integer, offsetof(struct qc_zvm_guest, secure)},
+	{qc_num_cpu_total, integer, offsetof(struct qc_zvm_guest, num_cpu_total)},
+	{qc_num_cpu_configured, integer, offsetof(struct qc_zvm_guest, num_cpu_configured)},
+	{qc_num_cpu_standby, integer, offsetof(struct qc_zvm_guest, num_cpu_standby)},
+	{qc_num_cpu_reserved, integer, offsetof(struct qc_zvm_guest, num_cpu_reserved)},
+	{qc_num_cpu_dedicated, integer, offsetof(struct qc_zvm_guest, num_cpu_dedicated)},
+	{qc_num_cpu_shared, integer, offsetof(struct qc_zvm_guest, num_cpu_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_zvm_guest, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_zvm_guest, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_zvm_guest, num_cp_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_zvm_guest, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_zvm_guest, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_zvm_guest, num_ifl_shared)},
+	{qc_num_ziip_total, integer, offsetof(struct qc_zvm_guest, num_ziip_total)},
+	{qc_num_ziip_dedicated, integer, offsetof(struct qc_zvm_guest, num_ziip_dedicated)},
+	{qc_num_ziip_shared, integer, offsetof(struct qc_zvm_guest, num_ziip_shared)},
+	{qc_has_multiple_cpu_types, integer, offsetof(struct qc_zvm_guest, has_multiple_cpu_types)},
+	{qc_cp_dispatch_limithard, integer, offsetof(struct qc_zvm_guest, cp_dispatch_limithard)},
+	{qc_cp_capped_capacity, integer, offsetof(struct qc_zvm_guest, cp_capped_capacity)},
+	{qc_ifl_dispatch_limithard, integer, offsetof(struct qc_zvm_guest, ifl_dispatch_limithard)},
+	{qc_ifl_capped_capacity, integer, offsetof(struct qc_zvm_guest, ifl_capped_capacity)},
+	{qc_ziip_dispatch_limithard, integer, offsetof(struct qc_zvm_guest, ziip_dispatch_limithard)},
+	{qc_ziip_capped_capacity, integer, offsetof(struct qc_zvm_guest, ziip_capped_capacity)},
+	{qc_cp_dispatch_type, integer, offsetof(struct qc_zvm_guest, cp_dispatch_type)},
+	{qc_ifl_dispatch_type, integer, offsetof(struct qc_zvm_guest, ifl_dispatch_type)},
+	{qc_ziip_dispatch_type, integer, offsetof(struct qc_zvm_guest, ziip_dispatch_type)},
+	{-1, string, -1}
+};
+
+static struct qc_attr zos_zcx_server_attrs[] = {
+	{qc_layer_type_num, integer, offsetof(struct qc_zos_zcx_server, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_zos_zcx_server, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_zos_zcx_server, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_zos_zcx_server, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_zos_zcx_server, layer_name)},
+	{qc_capping, string, offsetof(struct qc_zos_zcx_server, capping)},
+	{qc_capping_num, integer, offsetof(struct qc_zos_zcx_server, capping_num)},
+        {qc_has_secure, integer, offsetof(struct qc_zos_zcx_server, has_secure)},
+        {qc_secure, integer, offsetof(struct qc_zos_zcx_server, secure)},
+	{qc_num_cpu_total, integer, offsetof(struct qc_zos_zcx_server, num_cpu_total)},
+	{qc_num_cpu_configured, integer, offsetof(struct qc_zos_zcx_server, num_cpu_configured)},
+	{qc_num_cpu_standby, integer, offsetof(struct qc_zos_zcx_server, num_cpu_standby)},
+	{qc_num_cpu_reserved, integer, offsetof(struct qc_zos_zcx_server, num_cpu_reserved)},
+	{qc_num_cpu_dedicated, integer, offsetof(struct qc_zos_zcx_server, num_cpu_dedicated)},
+	{qc_num_cpu_shared, integer, offsetof(struct qc_zos_zcx_server, num_cpu_shared)},
+	{qc_num_cp_total, integer, offsetof(struct qc_zos_zcx_server, num_cp_total)},
+	{qc_num_cp_dedicated, integer, offsetof(struct qc_zos_zcx_server, num_cp_dedicated)},
+	{qc_num_cp_shared, integer, offsetof(struct qc_zos_zcx_server, num_cp_shared)},
+	{qc_num_ziip_total, integer, offsetof(struct qc_zos_zcx_server, num_ziip_total)},
+	{qc_num_ziip_dedicated, integer, offsetof(struct qc_zos_zcx_server, num_ziip_dedicated)},
+	{qc_num_ziip_shared, integer, offsetof(struct qc_zos_zcx_server, num_ziip_shared)},
+	{qc_has_multiple_cpu_types, integer, offsetof(struct qc_zos_zcx_server, has_multiple_cpu_types)},
+	{qc_cp_dispatch_limithard, integer, offsetof(struct qc_zos_zcx_server, cp_dispatch_limithard)},
+	{qc_cp_capped_capacity, integer, offsetof(struct qc_zos_zcx_server, cp_capped_capacity)},
+	{qc_ziip_dispatch_limithard, integer, offsetof(struct qc_zos_zcx_server, ziip_dispatch_limithard)},
+	{qc_ziip_capped_capacity, integer, offsetof(struct qc_zos_zcx_server, ziip_capped_capacity)},
+	{qc_cp_dispatch_type, integer, offsetof(struct qc_zos_zcx_server, cp_dispatch_type)},
+	{qc_ziip_dispatch_type, integer, offsetof(struct qc_zos_zcx_server, ziip_dispatch_type)},
 	{-1, string, -1}
 };
 
 static struct qc_attr kvm_guest_attrs[] = {
-	{qc_layer_type_num, integer, offsetof(struct qc_kvm_guest_values, layer_type_num)},
-	{qc_layer_category_num, integer, offsetof(struct qc_kvm_guest_values, layer_category_num)},
-	{qc_layer_type, string, offsetof(struct qc_kvm_guest_values, layer_type)},
-	{qc_layer_category, string, offsetof(struct qc_kvm_guest_values, layer_category)},
-	{qc_layer_name, string, offsetof(struct qc_kvm_guest_values, layer_name)},
-	{qc_layer_extended_name, string, offsetof(struct qc_kvm_guest_values, layer_extended_name)},
-	{qc_layer_uuid, string, offsetof(struct qc_kvm_guest_values, layer_uuid)},
-	{qc_num_cpu_total, integer, offsetof(struct qc_kvm_guest_values, num_cpu_total)},
-	{qc_num_cpu_configured, integer, offsetof(struct qc_kvm_guest_values, num_cpu_configured)},
-	{qc_num_cpu_standby, integer, offsetof(struct qc_kvm_guest_values, num_cpu_standby)},
-	{qc_num_cpu_reserved, integer, offsetof(struct qc_kvm_guest_values, num_cpu_reserved)},
-	{qc_num_cpu_dedicated, integer, offsetof(struct qc_kvm_guest_values, num_cpu_dedicated)},
-	{qc_num_cpu_shared, integer, offsetof(struct qc_kvm_guest_values, num_cpu_shared)},
-	{qc_num_ifl_total, integer, offsetof(struct qc_kvm_guest_values, num_ifl_total)},
-	{qc_num_ifl_dedicated, integer, offsetof(struct qc_kvm_guest_values, num_ifl_dedicated)},
-	{qc_num_ifl_shared, integer, offsetof(struct qc_kvm_guest_values, num_ifl_shared)},
-	{qc_ifl_dispatch_type, integer, offsetof(struct qc_kvm_guest_values, ifl_dispatch_type)},
+	{qc_layer_type_num, integer, offsetof(struct qc_kvm_guest, layer_type_num)},
+	{qc_layer_category_num, integer, offsetof(struct qc_kvm_guest, layer_category_num)},
+	{qc_layer_type, string, offsetof(struct qc_kvm_guest, layer_type)},
+	{qc_layer_category, string, offsetof(struct qc_kvm_guest, layer_category)},
+	{qc_layer_name, string, offsetof(struct qc_kvm_guest, layer_name)},
+	{qc_layer_extended_name, string, offsetof(struct qc_kvm_guest, layer_extended_name)},
+	{qc_layer_uuid, string, offsetof(struct qc_kvm_guest, layer_uuid)},
+        {qc_has_secure, integer, offsetof(struct qc_kvm_guest, has_secure)},
+        {qc_secure, integer, offsetof(struct qc_kvm_guest, secure)},
+	{qc_num_cpu_total, integer, offsetof(struct qc_kvm_guest, num_cpu_total)},
+	{qc_num_cpu_configured, integer, offsetof(struct qc_kvm_guest, num_cpu_configured)},
+	{qc_num_cpu_standby, integer, offsetof(struct qc_kvm_guest, num_cpu_standby)},
+	{qc_num_cpu_reserved, integer, offsetof(struct qc_kvm_guest, num_cpu_reserved)},
+	{qc_num_cpu_dedicated, integer, offsetof(struct qc_kvm_guest, num_cpu_dedicated)},
+	{qc_num_cpu_shared, integer, offsetof(struct qc_kvm_guest, num_cpu_shared)},
+	{qc_num_ifl_total, integer, offsetof(struct qc_kvm_guest, num_ifl_total)},
+	{qc_num_ifl_dedicated, integer, offsetof(struct qc_kvm_guest, num_ifl_dedicated)},
+	{qc_num_ifl_shared, integer, offsetof(struct qc_kvm_guest, num_ifl_shared)},
+	{qc_ifl_dispatch_type, integer, offsetof(struct qc_kvm_guest, ifl_dispatch_type)},
 	{-1, string, -1}
 };
 
@@ -417,10 +653,13 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_layer_name: return "layer_name";
 	case qc_layer_extended_name: return "layer_extended_name";
 	case qc_layer_uuid: return "layer_uuid";
+	case qc_lic_identifier: return "lic_identifier";
 	case qc_manufacturer: return "manufacturer";
 	case qc_type: return "type";
 	case qc_model_capacity: return "model_capacity";
+	case qc_type_family: return "type_family";
 	case qc_model: return "model";
+	case qc_type_name: return "type_name";
 	case qc_sequence_code: return "sequence_code";
 	case qc_plant: return "plant";
 	case qc_num_cpu_total: return "num_cpu_total";
@@ -449,7 +688,7 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_ifl_weight_capping: return "ifl_weight_capping";
 	case qc_cluster_name: return "cluster_name";
 	case qc_control_program_id: return "control_program_id";
-	case qc_hardlimit_consumption: return "hardlimit_consumption";
+	case qc_limithard_consumption: return "limithard_consumption";
 	case qc_prorated_core_time: return "prorated_core_time";
 	case qc_cp_limithard_cap: return "pool_cp_limithard_cap";
 	case qc_cp_capacity_cap: return "pool_cp_capacity_cap";
@@ -458,6 +697,8 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_capping: return "capping";
 	case qc_capping_num: return "capping_num";
 	case qc_mobility_enabled: return "mobility_enabled";
+        case qc_has_secure: return "has_secure";
+        case qc_secure: return "secure";
 	case qc_has_multiple_cpu_types: return "has_multiple_cpu_types";
 	case qc_cp_dispatch_limithard: return "cp_dispatch_limithard";
 	case qc_ifl_dispatch_limithard: return "ifl_dispatch_limithard";
@@ -473,6 +714,17 @@ const char *qc_attr_id_to_char(struct qc_handle *hdl, enum qc_attr_id id) {
 	case qc_num_core_reserved: return "num_core_reserved";
 	case qc_num_core_dedicated: return "num_core_dedicated";
 	case qc_num_core_shared: return "num_core_shared";
+	case qc_ziip_absolute_capping: return "ziip_absolute_capping";
+	case qc_ziip_capacity_cap: return "ziip_capacity_cap";
+	case qc_ziip_capped_capacity: return "ziip_capped_capacity";
+	case qc_ziip_dispatch_limithard: return "ziip_dispatch_limithard";
+	case qc_ziip_dispatch_type: return "ziip_dispatch_type";
+	case qc_ziip_limithard_cap: return "ziip_limithard_cap";
+	case qc_ziip_weight_capping: return "ziip_weight_capping";
+	case qc_num_ziip_dedicated: return "num_ziip_dedicated";
+	case qc_num_ziip_shared: return "num_ziip_shared";
+	case qc_num_ziip_total: return "num_ziip_total";
+	case qc_num_ziip_threads: return "num_ziip_threads";
 	default: break;
 	}
 	qc_debug(hdl, "Error: Cannot convert unknown attribute '%d' to char*\n", id);
@@ -490,35 +742,35 @@ int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no
 
 	switch (layer_type_num) {
 	case QC_LAYER_TYPE_CEC:
-		layer_sz = sizeof(struct qc_cec_values);
+		layer_sz = sizeof(struct qc_cec);
 		attrs = cec_attrs;
 		layer_category_num = QC_LAYER_CAT_HOST;
 		layer_category = "HOST";
 		layer_type = "CEC";
 		break;
 	case QC_LAYER_TYPE_LPAR_GROUP:
-		layer_sz = sizeof(struct qc_lpar_values);
+		layer_sz = sizeof(struct qc_lpar);
 		attrs = lpar_group_attrs;
 		layer_category_num = QC_LAYER_CAT_POOL;
 		layer_category = "POOL";
 		layer_type = "LPAR-GROUP";
 		break;
 	case QC_LAYER_TYPE_LPAR:
-		layer_sz = sizeof(struct qc_lpar_values);
+		layer_sz = sizeof(struct qc_lpar);
 		attrs = lpar_attrs;
 		layer_category_num = QC_LAYER_CAT_GUEST;
 		layer_category = "GUEST";
 		layer_type = "LPAR";
 		break;
 	case QC_LAYER_TYPE_ZVM_HYPERVISOR:
-		layer_sz = sizeof(struct qc_zvm_hypervisor_values);
+		layer_sz = sizeof(struct qc_zvm_hypervisor);
 		attrs = zvm_hv_attrs;
 		layer_category_num = QC_LAYER_CAT_HOST;
 		layer_category = "HOST";
 		layer_type = "z/VM-hypervisor";
 		break;
 	case QC_LAYER_TYPE_ZVM_RESOURCE_POOL:
-		layer_sz = sizeof(struct qc_zvm_pool_values);
+		layer_sz = sizeof(struct qc_zvm_pool);
 		attrs = zvm_pool_attrs;
 		layer_category_num = QC_LAYER_CAT_POOL;
 		layer_category = "POOL";
@@ -529,25 +781,46 @@ int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no
 #endif
 		break;
 	case QC_LAYER_TYPE_ZVM_GUEST:
-		layer_sz = sizeof(struct qc_zvm_guest_values);
+		layer_sz = sizeof(struct qc_zvm_guest);
 		attrs = zvm_guest_attrs;
 		layer_category_num = QC_LAYER_CAT_GUEST;
 		layer_category = "GUEST";
 		layer_type = "z/VM-guest";
 		break;
+		case QC_LAYER_TYPE_ZOS_HYPERVISOR:
+		layer_sz = sizeof(struct qc_zos_hypervisor);
+		attrs = zos_hv_attrs;
+		layer_category_num = QC_LAYER_CAT_HOST;
+		layer_category = "HOST";
+		layer_type = "z/OS-hypervisor";
+		break;
+		case QC_LAYER_TYPE_ZOS_TENANT_RESOURCE_GROUP:
+		layer_sz = sizeof(struct qc_zos_tenant_resource_group);
+		attrs = zos_tenant_resgroup_attrs;
+		layer_category_num = QC_LAYER_CAT_POOL;
+		layer_category = "POOL";
+		layer_type = "z/OS-tenant-resource-group";
+		break;
 	case QC_LAYER_TYPE_KVM_HYPERVISOR:
-		layer_sz = sizeof(struct qc_kvm_hypervisor_values);
+		layer_sz = sizeof(struct qc_kvm_hypervisor);
 		attrs = kvm_hv_attrs;
 		layer_category_num = QC_LAYER_CAT_HOST;
 		layer_category = "HOST";
 		layer_type = "KVM-hypervisor";
 		break;
 	case QC_LAYER_TYPE_KVM_GUEST:
-		layer_sz = sizeof(struct qc_kvm_guest_values);
+		layer_sz = sizeof(struct qc_kvm_guest);
 		attrs = kvm_guest_attrs;
 		layer_category_num = QC_LAYER_CAT_GUEST;
 		layer_category = "GUEST";
 		layer_type =  "KVM-guest";
+		break;
+	case QC_LAYER_TYPE_ZOS_ZCX_SERVER:
+		layer_sz = sizeof(struct qc_zos_zcx_server);
+		attrs = zos_zcx_server_attrs;
+		layer_category_num = QC_LAYER_CAT_GUEST;
+		layer_category = "GUEST";
+		layer_type = "z/OS-zCX-Server";
 		break;
 	default:
 		qc_debug(hdl, "Error: Unhandled layer type in qc_new_handle()\n");
@@ -594,8 +867,8 @@ int qc_new_handle(struct qc_handle *hdl, struct qc_handle **tgthdl, int layer_no
 	}
 	if (qc_set_attr_int(*tgthdl, qc_layer_type_num, layer_type_num, ATTR_SRC_UNDEF) ||
 	    qc_set_attr_int(*tgthdl, qc_layer_category_num, layer_category_num, ATTR_SRC_UNDEF) ||
-	    qc_set_attr_string(*tgthdl, qc_layer_type, layer_type, strlen(layer_type), ATTR_SRC_UNDEF) ||
-	    qc_set_attr_string(*tgthdl, qc_layer_category, layer_category, strlen(layer_category), ATTR_SRC_UNDEF))
+	    qc_set_attr_string(*tgthdl, qc_layer_type, layer_type, ATTR_SRC_UNDEF) ||
+	    qc_set_attr_string(*tgthdl, qc_layer_category, layer_category, ATTR_SRC_UNDEF))
 		return -5;
 
 	return 0;
@@ -728,8 +1001,9 @@ int qc_set_attr_float(struct qc_handle *hdl, enum qc_attr_id id, float val, char
 
 // Sets string attribute 'id' in layer as pointed to by 'hdl', stripping trailing blanks, but
 // leaving the original string unmodified
-int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *str, unsigned int str_len, char src) {
+int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *str, char src) {
 	char orig_src = qc_get_attr_value_src_int(hdl, id);
+	unsigned int attr_len = qc_get_str_attr_len(id);
 	char *ptr, *tmp, *s;
 	int prev_set;
 
@@ -750,8 +1024,8 @@ int qc_set_attr_string(struct qc_handle *hdl, enum qc_attr_id id, const char *st
 		}
 		free(tmp);
 	}
-	ptr[str_len] = '\0';
-	strncpy(ptr, str, str_len);
+	ptr[attr_len - 1] = '\0';
+	strncpy(ptr, str, attr_len - 1);
 	// strip trailing blanks
 	for (s = &ptr[strlen(ptr) - 1]; (*s == ' ' || *s == '\n') && s != ptr; --s)
 		*s = '\0';
@@ -774,7 +1048,7 @@ int qc_set_attr_ebcdic_string(struct qc_handle *hdl, enum qc_attr_id id, unsigne
 	memset(buf, '\0', str_len + 1);
 	memcpy(buf, str, str_len);
 	if ((rc = qc_ebcdic_to_ascii(hdl, buf, str_len)) == 0) {
-		if (strlen(buf) && qc_set_attr_string(hdl, id, (char *)buf, str_len, src))
+		if (strlen(buf) && qc_set_attr_string(hdl, id, (char *)buf, src))
 			rc = -2;
 	}
 	free(buf);
@@ -815,6 +1089,12 @@ int qc_is_attr_set_string(struct qc_handle *hdl, enum qc_attr_id id) {
 
 struct qc_handle *qc_get_root_handle(struct qc_handle *hdl) {
 	return hdl ? hdl->root : NULL;
+}
+
+struct qc_handle *qc_get_top_handle(struct qc_handle *hdl) {
+	for (; hdl->next != NULL; hdl = hdl->next);
+
+	return hdl;
 }
 
 struct qc_handle *qc_get_prev_handle(struct qc_handle *hdl) {
@@ -887,4 +1167,28 @@ char qc_get_attr_value_src_float(struct qc_handle *hdl, enum qc_attr_id id) {
 
 char qc_get_attr_value_src_string(struct qc_handle *hdl, enum qc_attr_id id) {
 	return qc_get_attr_value_src(hdl, id, string);
+}
+
+void qc_print_attrs_json(struct qc_handle *hdl, int indent) {
+        struct qc_attr *attr;
+        void *val;
+
+        for (attr = hdl->attr_list; attr->offset >= 0; attr++) {
+                if ((val = qc_get_attr_value(hdl, attr->id, attr->type)) == NULL)
+                        printf("%*s\"%s\": null", indent, "", qc_attr_id_to_char(hdl, attr->id));
+                else {
+                        switch (attr->type) {
+                        case integer:
+                                printf("%*s\"%s\": \"%d\"", indent, "", qc_attr_id_to_char(hdl, attr->id), *(int*)val);
+                                break;
+                        case floatingpoint:
+                                printf("%*s\"%s\": \"%f\"", indent, "", qc_attr_id_to_char(hdl, attr->id), *(float*)val);
+                                break;
+                        case string:
+                                printf("%*s\"%s\": \"%s\"", indent, "", qc_attr_id_to_char(hdl, attr->id), (char*)val);
+                                break;
+                        }
+                }
+                printf("%s\n", (attr + 1)->offset >= 0 ? "," : "");
+        }
 }

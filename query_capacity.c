@@ -1,12 +1,9 @@
-/* Copyright IBM Corp. 2013, 2018 */
+/* Copyright IBM Corp. 2013, 2020 */
 
-//_GNU_SOURCE used for getline and posix_memalign
 #define _GNU_SOURCE
 
-#include <unistd.h>
 #include <sys/stat.h>
 
-#include "query_capacity_int.h"
 #include "query_capacity_data.h"
 
 
@@ -28,7 +25,7 @@ struct qc_reg_hdl {
 
 static struct qc_reg_hdl *qc_hdls = NULL;
 
-static void __attribute__((destructor)) qc_destructor() {
+static void __attribute__((destructor)) qc_destructor(void) {
 	if (qc_cd != (iconv_t)-1)
 		iconv_close(qc_cd);
 }
@@ -53,12 +50,14 @@ static void qc_update_dbg_level(void) {
 		if (end == s || qc_dbg_level < 0)
 			qc_dbg_level = 0;
 	}
+#ifdef CONFIG_DUMP_READING
 	s = getenv("QC_USE_DUMP");
 	// if qc_dbg_use_dump is NULL, then there's nothing we can do about it
 	if (s) {
 		free(qc_dbg_use_dump);
 		qc_dbg_use_dump = strdup(s);
 	}
+#endif
 	s = getenv("QC_AUTODUMP");
 	if (s) {
 		qc_dbg_autodump = strtol(s, &end, 10);
@@ -112,7 +111,7 @@ static int qc_debug_file_init(void) {
 				goto out_err;
 			}
 		}
-		qc_debug(NULL, "This is qclib v1.4.1, level 9244c6d, date 2018-06-23 13:59:05 +0200\n");
+		qc_debug(NULL, "This is qclib v2.2.0, level 33725a4f, date 2020-09-09 17:55:45 +0200\n");
 	}
 
 	return 0;
@@ -197,8 +196,6 @@ static int qc_debug_init(void) {
 		if (access(qc_dbg_use_dump, R_OK | X_OK) == -1) {
 			qc_debug(NULL, "Error: Dump usage requested, but path '%s' "
 					"not accessible: %s\n",	qc_dbg_use_dump, strerror(errno));
-			free(qc_dbg_use_dump);
-			qc_dbg_use_dump = NULL;
 			rc = 2;
 			goto out_err;
 		}
@@ -227,6 +224,8 @@ out_err:
 	// Nothing we can do about this except to disable debug messages to prevent further damage
 	free(qc_dbg_dump_dir);
 	qc_dbg_dump_dir = NULL;
+	free(qc_dbg_use_dump);
+	qc_dbg_use_dump = NULL;
 	free(path);
 
 	return rc;
@@ -298,6 +297,56 @@ out:
 	return rc;
 }
 
+static int qc_hdl_register(struct qc_handle *hdl) {
+	struct qc_reg_hdl *entry;
+
+	entry = malloc(sizeof(struct qc_reg_hdl));
+	if (!entry) {
+		qc_debug(hdl, "Error: Failed register hdl\n");
+		return -1;
+	}
+	entry->hdl = hdl;
+	if (qc_hdls)
+		entry->next = qc_hdls;
+	else
+		entry->next = NULL;
+	qc_hdls = entry;
+
+	return 0;
+}
+
+static void qc_hdl_unregister(struct qc_handle *hdl) {
+	struct qc_reg_hdl *entry, *prev = NULL;
+
+	for (entry = qc_hdls; entry != NULL; prev = entry, entry = entry->next) {
+		if (entry->hdl == hdl) {
+			if (prev && entry->next)
+				prev->next = entry->next;
+			else if (!prev)
+				qc_hdls = entry->next;
+			else
+				prev->next = NULL;
+			free(entry);
+			break;
+		}
+	}
+	return;
+}
+
+static int qc_hdl_verify(struct qc_handle *hdl, const char *func) {
+	struct qc_reg_hdl *entry;
+
+	if (!hdl)
+		return -1;
+	for (entry = qc_hdls; entry != NULL; entry = entry->next) {
+		if (entry->hdl == hdl)
+			return 0;
+	}
+	qc_debug(NULL, "Error: %s() called with unknown handle %p\n", func, hdl);
+
+	return -1;
+}
+
 // De-alloc hdl, leaving out the actual handle
 static void qc_hdl_reinit(struct qc_handle *hdl) {
 	struct qc_handle *ptr = hdl, *arg = hdl;
@@ -314,6 +363,29 @@ static void qc_hdl_reinit(struct qc_handle *hdl) {
 			free(ptr);
 		ptr = hdl;
 	}
+	qc_hdl_unregister(arg);
+}
+
+/** Verifies that either a and (b or c), or none are set. I.e. if only one of the attributes is set, then that's an error */
+static int qc_verify_capped_capacity(struct qc_handle *hdl, enum qc_attr_id a, enum qc_attr_id b, enum qc_attr_id c) {
+	int *val_a, *val_b, *val_c;
+
+	// We assume that non-presence of a value is due to...non-presence, as opposed to an error (since that would have been reported previously)
+	val_a = qc_get_attr_value_int(hdl, a);
+	val_b = qc_get_attr_value_int(hdl, b);
+	val_c = qc_get_attr_value_int(hdl, c);
+	if (!val_a && !val_b && !val_c)
+		return 0;
+
+	if ((*val_a && !*val_b && !*val_c) || (!*val_a && (*val_b || *val_c))) {
+		qc_debug(hdl, "Warning: Consistency check (\"capped capacity\") for '%s && (%s || %s)' failed at layer %d (%s/%s): %d && (%d || %d)\n",
+			qc_attr_id_to_char(hdl, a), qc_attr_id_to_char(hdl, b), qc_attr_id_to_char(hdl, c),
+			hdl->layer_no, qc_get_attr_value_string(hdl, qc_layer_type), qc_get_attr_value_string(hdl, qc_layer_category),
+			*val_a, *val_b, *val_c);
+		return 1;
+	}
+
+	return 0;
 }
 
 #define ATTR_UNDEF	qc_layer_name
@@ -379,45 +451,57 @@ static int qc_consistency_check(struct qc_handle *hdl) {
 
 		switch (*etype) {
 		case QC_LAYER_TYPE_CEC:
-			if ((rc = qc_verify(hdl, qc_num_core_dedicated, qc_num_core_shared,	ATTR_UNDEF,	      qc_num_core_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_core_configured, qc_num_core_standby,	qc_num_core_reserved, qc_num_core_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_total,	 qc_num_ifl_total,	ATTR_UNDEF,	      qc_num_core_total, 0)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,	 qc_num_cp_dedicated,	ATTR_UNDEF,	      qc_num_core_dedicated, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_shared,	 qc_num_cp_shared,	ATTR_UNDEF,	      qc_num_core_shared, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,    qc_num_cp_shared,	ATTR_UNDEF,	      qc_num_cp_total,  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,   qc_num_ifl_shared,	ATTR_UNDEF,	      qc_num_ifl_total, 1)))
+			if ((rc = qc_verify(hdl, qc_num_core_dedicated, qc_num_core_shared,	ATTR_UNDEF,	      	qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_core_configured, qc_num_core_standby,	qc_num_core_reserved, 	qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_total,	 qc_num_ifl_total,	ATTR_UNDEF,     	qc_num_core_total, 0)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,	 qc_num_cp_dedicated,	ATTR_UNDEF,		qc_num_core_dedicated, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_shared,	 qc_num_cp_shared,	ATTR_UNDEF,		qc_num_core_shared, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,    qc_num_cp_shared,	ATTR_UNDEF,	      	qc_num_cp_total,  1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,   qc_num_ifl_shared,	ATTR_UNDEF,	      	qc_num_ifl_total, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_ziip_dedicated,  qc_num_ziip_shared,	ATTR_UNDEF,	      	qc_num_ziip_total, 1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_LPAR:
 			if ((rc = qc_verify(hdl, qc_num_core_dedicated,  qc_num_core_shared,	ATTR_UNDEF,	     qc_num_core_total, 0)) ||
 			    (rc = qc_verify(hdl, qc_num_core_configured, qc_num_core_reserved,	qc_num_core_standby, qc_num_core_total, 0)) ||
 			    (rc = qc_verify(hdl, qc_num_cp_dedicated,	 qc_num_cp_shared,	ATTR_UNDEF,	     qc_num_cp_total,  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,   qc_num_ifl_shared,	ATTR_UNDEF,	     qc_num_ifl_total, 1)))
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,   qc_num_ifl_shared,	ATTR_UNDEF,	     qc_num_ifl_total, 1)) ||
+			    (rc = qc_verify(hdl, qc_num_ziip_dedicated,  qc_num_ziip_shared,	ATTR_UNDEF,	     qc_num_ziip_total, 1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_ZVM_HYPERVISOR:
-			if ((rc = qc_verify(hdl, qc_num_core_dedicated, qc_num_core_shared,	ATTR_UNDEF, qc_num_core_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_total,       qc_num_ifl_total,	ATTR_UNDEF, qc_num_core_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_ifl_dedicated,	ATTR_UNDEF, qc_num_core_dedicated, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_shared,      qc_num_ifl_shared,	ATTR_UNDEF, qc_num_core_shared,	  1)) ||
+			if ((rc = qc_verify(hdl, qc_num_core_dedicated, qc_num_core_shared,	ATTR_UNDEF,		qc_num_core_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_total,       qc_num_ifl_total,	ATTR_UNDEF,		qc_num_core_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_ifl_dedicated,	ATTR_UNDEF,		qc_num_core_dedicated,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_shared,      qc_num_ifl_shared,	ATTR_UNDEF,		qc_num_core_shared,	1)) ||
 			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_cp_shared,	ATTR_UNDEF, qc_num_cp_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF, qc_num_ifl_total,	  1)))
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF, qc_num_ifl_total,	  1)) ||
+			    (rc = qc_verify(hdl, qc_num_ziip_dedicated,	qc_num_ziip_shared,	ATTR_UNDEF, qc_num_ziip_total,	  1)))
+				goto out;
+			break;
+		case QC_LAYER_TYPE_ZVM_CPU_POOL:
+		case QC_LAYER_TYPE_ZOS_TENANT_RESOURCE_GROUP:
+			if ((rc = qc_verify_capped_capacity(hdl, qc_cp_capped_capacity, qc_cp_capacity_cap, qc_cp_limithard_cap)) ||
+			    (rc = qc_verify_capped_capacity(hdl, qc_ifl_capped_capacity, qc_ifl_capacity_cap, qc_ifl_limithard_cap)) ||
+			    (rc = qc_verify_capped_capacity(hdl, qc_ziip_capped_capacity, qc_ziip_capacity_cap, qc_ziip_limithard_cap)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_ZVM_GUEST:
-			if ((rc = qc_verify(hdl, qc_num_cpu_dedicated,  qc_num_cpu_shared,	ATTR_UNDEF,	    qc_num_cpu_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cpu_configured, qc_num_cpu_reserved,	qc_num_cpu_standby, qc_num_cpu_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_total,       qc_num_ifl_total,	ATTR_UNDEF,	    qc_num_cpu_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_ifl_dedicated,	ATTR_UNDEF,	    qc_num_cpu_dedicated, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_shared,      qc_num_ifl_shared,	ATTR_UNDEF,	    qc_num_cpu_shared,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_cp_shared,	ATTR_UNDEF,	    qc_num_cp_total,	  1)) ||
-			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF,	    qc_num_ifl_total,	  1)))
+			if ((rc = qc_verify(hdl, qc_num_cpu_dedicated,  qc_num_cpu_shared,	ATTR_UNDEF,		qc_num_cpu_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cpu_configured, qc_num_cpu_reserved,	qc_num_cpu_standby,	qc_num_cpu_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_total,       qc_num_ifl_total,	ATTR_UNDEF,		qc_num_cpu_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_ifl_dedicated,	ATTR_UNDEF,		qc_num_cpu_dedicated,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_shared,      qc_num_ifl_shared,	ATTR_UNDEF,		qc_num_cpu_shared,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_cp_dedicated,   qc_num_cp_shared,	ATTR_UNDEF,		qc_num_cp_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,  qc_num_ifl_shared,	ATTR_UNDEF,		qc_num_ifl_total,	1)) ||
+			    (rc = qc_verify(hdl, qc_num_ziip_dedicated,	qc_num_ziip_shared,	ATTR_UNDEF,		qc_num_ziip_total,	1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_KVM_HYPERVISOR:
 			if ((rc = qc_verify(hdl, qc_num_core_shared, 	qc_num_core_dedicated,	ATTR_UNDEF,	    qc_num_core_total, 1)) ||
+			(rc = qc_verify(hdl, qc_num_cp_dedicated,	qc_num_cp_shared,	ATTR_UNDEF,	    qc_num_cp_total, 1)) ||
 			    (rc = qc_verify(hdl, qc_num_ifl_dedicated,	qc_num_ifl_shared,	ATTR_UNDEF,	    qc_num_ifl_total, 1)) ||
-			    (rc = qc_verify(hdl, qc_num_cp_dedicated,	qc_num_cp_shared,	ATTR_UNDEF,	    qc_num_cp_total, 1)))
+			    (rc = qc_verify(hdl, qc_num_ziip_dedicated,	qc_num_ziip_shared,	ATTR_UNDEF,	    qc_num_ziip_total, 1)))
 				goto out;
 			break;
 		case QC_LAYER_TYPE_KVM_GUEST:
@@ -433,6 +517,8 @@ static int qc_consistency_check(struct qc_handle *hdl) {
 	}
 
 out:
+	if (rc)
+		qc_debug(hdl, "Warning: Consistency check failed\n");
 	qc_debug_indent_dec();
 
 	return rc;
@@ -454,9 +540,96 @@ static int qc_copy_attr_value_rename(struct qc_handle *tgt, enum qc_attr_id tgti
 	return i ? qc_set_attr_int(tgt, tgtid, *i, ATTR_SRC_POSTPROC) : 0;
 }
 
+struct qc_mtype {
+	int	type;
+	char   *zname;	// IBM Z
+	char   *lname;  // LinuxONE
+};
+
+static struct qc_mtype mtypes[] = {
+	//     IBM Z				LinuxONE
+	{4381, "IBM 4381",			NULL},
+	{3090, "IBM 3090",			NULL},
+	{9221, "IBM S/390 9221",		NULL},
+	{9021, "IBM ES/9000 9021",		NULL},
+	{2003, "IBM S/390 Multiprise 2000",	NULL},
+	{3000, "IBM S/390 StarterPak 3000",	NULL},
+	{9672, "IBM S/390 9672",		NULL},
+	{2066, "IBM zSeries 800",		NULL},
+	{2064, "IBM zSeries 900",		NULL},
+	{2086, "IBM zSeries 890",		NULL},
+	{2084, "IBM zSeries 990",		NULL},
+	{2096, "IBM System z9 BC",		NULL},
+	{2094, "IBM System z9 EC",		NULL},
+	{2098, "IBM System z10 BC",		NULL},
+	{2097, "IBM System z10 EC",		NULL},
+	{2818, "IBM zEnterprise 114",		NULL},
+	{2817, "IBM zEnterprise 196",		NULL},
+	{2827, "IBM zEnterprise EC12",		NULL},
+	{2828, "IBM zEnterprise BC12",		NULL},
+	{2965, "IBM z13s",			"IBM LinuxONE Rockhopper"},
+	{2964, "IBM z13",			"IBM LinuxONE Emperor"},
+	{3907, "IBM z14 ZR1",			"IBM LinuxONE Rockhopper II"},
+	{3906, "IBM z14",			"IBM LinuxONE Emperor II"},
+	{8561, "IBM z15",			"IBM LinuxONE III"},
+	{8562, "IBM z15 Model T02",		"IBM LinuxONE III Model LT2"},
+	{0,    NULL,				NULL}
+};
+
+static int qc_post_process_ziip_thrds(struct qc_handle *hdl) {
+	int *thrds, *ziips;
+
+	if ((ziips = qc_get_attr_value_int(hdl, qc_num_ziip_total)) && *ziips) {
+		if ((thrds = qc_get_attr_value_int(hdl, qc_num_ifl_threads)) &&
+		    qc_set_attr_int(hdl, qc_num_ziip_threads, *thrds, ATTR_SRC_POSTPROC))
+			return -1;
+	}
+
+	return 0;
+}
+
+static int qc_post_process_CEC(struct qc_handle *hdl) {
+	int cpuid, rc = -1, family = QC_TYPE_FAMILY_IBMZ;
+	struct qc_mtype *type;
+	char *str;
+
+	qc_debug(hdl, "Fill CEC layer\n");
+	qc_debug_indent_inc();
+	if ((str = qc_get_attr_value_string(hdl, qc_type)) == NULL)
+		goto out;
+	cpuid = atoi(str);
+	for (type = mtypes; type->type; ++type) {
+		if (cpuid == type->type) {
+			if (type->lname &&
+			    (str = qc_get_attr_value_string(hdl, qc_model)) != NULL &&
+			    *str == 'L') {
+				str = type->lname;
+				family = QC_TYPE_FAMILY_LINUXONE;
+			} else
+				str = type->zname;
+			if (qc_set_attr_string(hdl, qc_type_name, str, ATTR_SRC_POSTPROC) ||
+			    qc_set_attr_int(hdl, qc_type_family, family, ATTR_SRC_POSTPROC))
+				goto out;
+			break;
+		}
+	}
+	if (qc_post_process_ziip_thrds(hdl))
+		goto out;
+	rc = 0;
+
+out:
+	qc_debug_indent_dec();
+
+	return rc;
+}
+
+static int qc_post_process_LPAR(struct qc_handle *hdl) {
+	return qc_post_process_ziip_thrds(hdl);
+}
+
 static int qc_post_process_KVM_host(struct qc_handle *hdl) {
 	struct qc_handle *parent = qc_get_prev_handle(hdl);
-	int *num_conf, rc;
+	int *num_conf, rc, *cps, *ifls;
 
 	qc_debug(hdl, "Fill KVM host layer\n");
 	qc_debug_indent_inc();
@@ -474,13 +647,25 @@ static int qc_post_process_KVM_host(struct qc_handle *hdl) {
 	num_conf = qc_get_attr_value_int(parent, qc_num_core_configured);
 	if (!num_conf)
 		num_conf = qc_get_attr_value_int(parent, qc_num_cpu_configured);
-	rc |= !num_conf ||
-	      qc_set_attr_int(hdl, qc_num_core_total, *num_conf, ATTR_SRC_POSTPROC) ||
-	      qc_copy_attr_value_rename(hdl, qc_num_core_dedicated, parent, qc_num_cpu_dedicated) ||
-	      qc_copy_attr_value_rename(hdl, qc_num_core_shared, parent, qc_num_cpu_shared) ||
-	      qc_copy_attr_value(hdl, parent, qc_num_ifl_total) ||
-	      qc_copy_attr_value(hdl, parent, qc_num_ifl_dedicated) ||
-	      qc_copy_attr_value(hdl, parent, qc_num_ifl_shared);
+	if (!num_conf)
+		rc = 1;
+	if (!rc) {
+		rc |= qc_set_attr_int(hdl, qc_num_core_total, *num_conf, ATTR_SRC_POSTPROC) ||
+		      qc_copy_attr_value_rename(hdl, qc_num_core_dedicated, parent, qc_num_cpu_dedicated) ||
+		      qc_copy_attr_value_rename(hdl, qc_num_core_shared, parent, qc_num_cpu_shared);
+		cps = qc_get_attr_value_int(parent, qc_num_cp_total);
+		ifls = qc_get_attr_value_int(parent, qc_num_cp_total);
+		if (cps && ifls && *cps && *ifls) {
+			// mixed-mode LPARs use CPs only!
+			rc |= qc_set_attr_int(hdl, qc_num_ifl_total, 0, ATTR_SRC_POSTPROC) ||
+			      qc_set_attr_int(hdl, qc_num_ifl_dedicated, 0, ATTR_SRC_POSTPROC) ||
+			      qc_set_attr_int(hdl, qc_num_ifl_shared, 0, ATTR_SRC_POSTPROC);
+		} else {
+			rc |= qc_copy_attr_value(hdl, parent, qc_num_ifl_total) ||
+			      qc_copy_attr_value(hdl, parent, qc_num_ifl_dedicated) ||
+			      qc_copy_attr_value(hdl, parent, qc_num_ifl_shared);
+		}
+	}
 
 	qc_debug_indent_dec();
 
@@ -528,6 +713,14 @@ static int qc_post_processing(struct qc_handle *hdl) {
 	qc_debug_indent_inc();
 	for (; hdl; hdl = hdl->next) {
 		switch(*(int *)(hdl->layer)) {
+		case QC_LAYER_TYPE_CEC:
+			if (qc_post_process_CEC(hdl))
+				goto fail;
+			break;
+		case QC_LAYER_TYPE_LPAR:
+			if (qc_post_process_LPAR(hdl))
+				goto fail;
+			break;
 		case QC_LAYER_TYPE_KVM_HYPERVISOR:
 			if (qc_post_process_KVM_host(hdl))
 				goto fail;
@@ -551,7 +744,8 @@ fail:
 
 static void *_qc_open(struct qc_handle *hdl, int *rc) {
 	// sysinfo needs to be handled first, or our LGM check later on will have loopholes
-	struct qc_data_src *src, *sources[] = {&sysinfo, &ocf, &hypfs, &sthyi, NULL};
+	// sysfs needs to be handled last, as part of the attributes apply to top-most layer only
+	struct qc_data_src *src, *sources[] = {&sysinfo, &hypfs, &sthyi, &sysfs, NULL};
 	struct qc_handle *lparhdl;
 	int i;
 
@@ -619,60 +813,13 @@ out:
 	// Close all data sources
 	for (i = 0; (src = sources[i]) != NULL; i++)
 		src->close(hdl, src->priv);
+	if (hdl)
+		// nothing else we can do if registration fails
+		qc_hdl_register(hdl);
 	qc_debug(hdl, "Return rc=%d\n", *rc);
 	qc_debug_indent_dec();
 
 	return hdl;
-}
-
-static int qc_register_hdl(struct qc_handle *hdl) {
-	struct qc_reg_hdl *entry;
-
-	entry = malloc(sizeof(struct qc_reg_hdl));
-	if (!entry) {
-		qc_debug(hdl, "Error: Failed register hdl\n");
-		return -1;
-	}
-	entry->hdl = hdl;
-	if (qc_hdls)
-		entry->next = qc_hdls;
-	else
-		entry->next = NULL;
-	qc_hdls = entry;
-
-	return 0;
-}
-
-static int qc_verify_hdl(struct qc_handle *hdl, const char *func) {
-	struct qc_reg_hdl *entry;
-
-	if (!hdl)
-		return -1;
-	for (entry = qc_hdls; entry != NULL; entry = entry->next) {
-		if (entry->hdl == hdl)
-			return 0;
-	}
-	qc_debug(NULL, "Error: %s() called with unknown handle 0x%p\n", func, hdl);
-
-	return -1;
-}
-
-static void qc_unregister_hdl(struct qc_handle *hdl) {
-	struct qc_reg_hdl *entry, *prev = NULL;
-
-	for (entry = qc_hdls; entry != NULL; prev = entry, entry = entry->next) {
-		if (entry->hdl == hdl) {
-			if (prev && entry->next)
-				prev->next = entry->next;
-			else if (!prev)
-				qc_hdls = entry->next;
-			else
-				prev->next = NULL;
-			free(entry);
-			break;
-		}
-	}
-	return;
 }
 
 void *qc_open(int *rc) {
@@ -709,18 +856,17 @@ void *qc_open(int *rc) {
 	 * giving up. */
 	for (i = 0; i < 3; ++i) {
 		if (i > 0) {
-			qc_debug(hdl, "Warning: Consistency check failed, retry %d\n", i);
+			qc_debug(hdl, "Warning: Gathering data failed, retry %d\n", i);
 			qc_hdl_reinit(hdl);
 		}
 		hdl = _qc_open(hdl, rc);
-		if (*rc	|| ((*rc = qc_consistency_check(hdl)) <= 0))
+		if (*rc > 0)
+			continue;
+		if (*rc < 0 || ((*rc = qc_consistency_check(hdl)) <= 0))
 			break;
 	}
-	if (*rc > 0) {
-		qc_debug(hdl, "Warning: Unable to retrieve consistent data, giving up\n");
-	}
-	if (*rc == 0)
-		*rc = qc_register_hdl(hdl);
+	if (*rc > 0)
+		qc_debug(hdl, "Error: Unable to retrieve consistent data, giving up\n");
 
 out:
 	qc_debug(hdl, "Return %p, rc=%d\n", *rc ? NULL : hdl, *rc);
@@ -734,14 +880,13 @@ out:
 }
 
 void qc_close(void *hdl) {
-	if (qc_verify_hdl(hdl, "qc_close"))
+	if (qc_hdl_verify(hdl, "qc_close"))
 		return;
 	qc_debug(hdl, "qc_close()\n");
 	qc_debug_indent_inc();
 
 	qc_debug_deinit(hdl);
 	qc_hdl_reinit(hdl);
-	qc_unregister_hdl(hdl);
 	free(hdl);
 
 	qc_debug_indent_dec();
@@ -750,7 +895,7 @@ void qc_close(void *hdl) {
 int qc_get_num_layers(void *cfg, int *rc) {
 	struct qc_handle *hdl = cfg;
 
-	if (qc_verify_hdl(hdl, "qc_get_num_layers")) {
+	if (qc_hdl_verify(hdl, "qc_get_num_layers")) {
 		*rc = -EFAULT;
 		return *rc;
 	}
@@ -778,7 +923,7 @@ static struct qc_handle *qc_get_layer_handle(void *config, int layer) {
 }
 
 static int qc_is_attr_id_valid(enum qc_attr_id id) {
-	return id <= qc_num_core_shared;
+	return id <= qc_secure;
 }
 
 int qc_get_attribute_string(void *cfg, enum qc_attr_id id, int layer, const char **value) {
@@ -786,7 +931,7 @@ int qc_get_attribute_string(void *cfg, enum qc_attr_id id, int layer, const char
 	int rc;
 
 	*value = NULL;
-	if (qc_verify_hdl(cfg, "qc_get_attribute_string"))
+	if (qc_hdl_verify(cfg, "qc_get_attribute_string"))
 		return -4;
 	hdl = qc_get_layer_handle(cfg, layer);
 	qc_debug(cfg, "qc_get_attribute_string(attr=%d, layer=%d)\n", id, layer);
@@ -823,7 +968,7 @@ int qc_get_attribute_int(void *cfg, enum qc_attr_id id, int layer, int *value) {
 	int rc;
 
 	*value = -EINVAL;
-	if (qc_verify_hdl(cfg, "qc_get_attribute_int"))
+	if (qc_hdl_verify(cfg, "qc_get_attribute_int"))
 		return -4;
 	hdl = qc_get_layer_handle(cfg, layer);
 	qc_debug(cfg, "qc_get_attribute_int(attr=%d, layer=%d)\n", id, layer);
@@ -865,7 +1010,7 @@ int qc_get_attribute_float(void *cfg, enum qc_attr_id id, int layer, float *valu
 	int rc;
 
 	*value = -EINVAL;
-	if (qc_verify_hdl(cfg, "qc_get_attribute_float"))
+	if (qc_hdl_verify(cfg, "qc_get_attribute_float"))
 		return -4;
 	hdl = qc_get_layer_handle(cfg, layer);
 	qc_debug(cfg, "qc_get_attribute_float(attr=%d, layer=%d)\n", id, layer);
@@ -898,4 +1043,34 @@ out:
 	qc_debug_indent_dec();
 
 	return rc;
+}
+
+static void qc_start_object(int *jindent, int layer) {
+	printf("%*s\"Layer %d\": {\n", *jindent, "", layer);
+	*jindent += 2;
+}
+static void qc_end_object(int *jindent, int final) {
+	*jindent -= 2;
+	printf("%*s}%s\n", *jindent, "", (final ? "" : ","));
+}
+
+void qc_export_json(void *cfg) {
+	struct qc_handle *hdl = (struct qc_handle *)cfg;
+	int jindent = 0;	// indent for json output
+	int i;
+
+	if (!hdl)
+		return;
+
+	printf("{\n");
+	jindent += 2;
+	for (hdl = hdl->root, i = 0; hdl != NULL; hdl = hdl->next, i++) {
+		qc_start_object(&jindent, i);
+		qc_print_attrs_json(hdl, jindent);
+		qc_end_object(&jindent, hdl->next == NULL);
+	}
+
+	printf("}\n");
+
+	return;
 }
